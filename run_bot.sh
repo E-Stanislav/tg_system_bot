@@ -33,3 +33,9 @@ else
     echo "Запуск tg_system_bot через pm2..."
     pm2 start main.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
 fi
+
+# Сохраняем текущие процессы pm2 для автозапуска после перезагрузки
+pm2 save
+
+# Настраиваем автозапуск pm2 при старте системы (однократно, если не настроено)
+pm2 startup
