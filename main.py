@@ -851,6 +851,11 @@ async def set_bot_commands() -> None:
 
 async def main() -> None:  # pragma: no cover - runtime
     await set_bot_commands()
+    # Уведомление админу о запуске
+    try:
+        await bot.send_message(ADMIN_ID_INT, "✅ Сервер запущен и бот активен.")
+    except Exception as e:
+        logger.warning(f"Не удалось отправить сообщение админу при запуске: {e}")
     # Start polling
     logger.info("Starting polling...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
