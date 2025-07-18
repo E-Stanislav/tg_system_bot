@@ -858,6 +858,70 @@ async def set_bot_commands() -> None:
     await bot.set_my_commands(commands=commands, scope=BotCommandScopeDefault())
 
 # ----------------------------------------------------------------------------
+# Background monitoring and alerting
+# ----------------------------------------------------------------------------
+
+ALERT_CPU_THRESHOLD = 90.0  # %
+ALERT_RAM_THRESHOLD = 90.0  # %
+ALERT_DISK_THRESHOLD = 10.0  # % свободного места
+ALERT_SERVICES = ["nginx", "postgresql", "mysql", "docker"]  # важные сервисы, можно расширить
+STATUS_SCHEDULE_SECONDS = 24 * 60 * 60  # раз в сутки
+
+async def background_monitoring():
+    last_alerts = {"cpu": False, "ram": False, "disk": set(), "service": set()}
+    while True:
+        try:
+            status = gather_system_status()
+            # CPU
+            if status.cpu.percent > ALERT_CPU_THRESHOLD:
+                if not last_alerts["cpu"]:
+                    await bot.send_message(ADMIN_ID_INT, f"⚠️ Высокая загрузка CPU: <b>{status.cpu.percent:.1f}%</b>")
+                    last_alerts["cpu"] = True
+            else:
+                last_alerts["cpu"] = False
+            # RAM
+            if status.memory.percent > ALERT_RAM_THRESHOLD:
+                if not last_alerts["ram"]:
+                    await bot.send_message(ADMIN_ID_INT, f"⚠️ Высокое использование RAM: <b>{status.memory.percent:.1f}%</b>")
+                    last_alerts["ram"] = True
+            else:
+                last_alerts["ram"] = False
+            # Диски
+            for d in status.disks:
+                free_percent = 100.0 - d.percent
+                if free_percent < ALERT_DISK_THRESHOLD:
+                    if d.mount not in last_alerts["disk"]:
+                        await bot.send_message(ADMIN_ID_INT, f"⚠️ Мало места на диске <b>{d.mount}</b>: <b>{fmt_bytes(d.used)}/{fmt_bytes(d.total)}</b> ({free_percent:.1f}% свободно)")
+                        last_alerts["disk"].add(d.mount)
+                else:
+                    last_alerts["disk"].discard(d.mount)
+            # Важные сервисы
+            for svc in ALERT_SERVICES:
+                rc, out, err = await run_command(f"systemctl is-active {shlex.quote(svc)}")
+                if rc != 0 or "inactive" in out or "failed" in out:
+                    if svc not in last_alerts["service"]:
+                        await bot.send_message(ADMIN_ID_INT, f"❗️ Важный сервис <b>{svc}</b> не работает!")
+                        last_alerts["service"].add(svc)
+                else:
+                    last_alerts["service"].discard(svc)
+        except Exception as e:
+            logger.warning(f"Ошибка в background_monitoring: {e}")
+        await asyncio.sleep(60)  # Проверять каждую минуту
+
+# ----------------------------------------------------------------------------
+# Status scheduler (раз в сутки)
+# ----------------------------------------------------------------------------
+
+async def scheduled_status():
+    while True:
+        try:
+            status = gather_system_status()
+            await bot.send_message(ADMIN_ID_INT, render_status_html(status), reply_markup=kb_main_menu())
+        except Exception as e:
+            logger.warning(f"Ошибка в scheduled_status: {e}")
+        await asyncio.sleep(STATUS_SCHEDULE_SECONDS)
+
+# ----------------------------------------------------------------------------
 # Startup / polling
 # ----------------------------------------------------------------------------
 
@@ -868,6 +932,9 @@ async def main() -> None:  # pragma: no cover - runtime
         await bot.send_message(ADMIN_ID_INT, "✅ Сервер запущен и бот активен.")
     except Exception as e:
         logger.warning(f"Не удалось отправить сообщение админу при запуске: {e}")
+    # Start background monitoring and scheduler
+    asyncio.create_task(background_monitoring())
+    asyncio.create_task(scheduled_status())
     # Start polling
     logger.info("Starting polling...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
