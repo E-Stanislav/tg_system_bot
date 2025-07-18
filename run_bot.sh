@@ -19,5 +19,11 @@ fi
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Запуск main.py
-python main.py 
+# Проверка наличия pm2
+if ! command -v pm2 &> /dev/null; then
+    echo "pm2 не найден, устанавливаю..."
+    npm install -g pm2
+fi
+
+# Запуск main.py через pm2
+pm2 start main.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
