@@ -1,0 +1,10 @@
+{
+  "name": "tg_system_bot",
+  "version": "1.0.0",
+  "description": "Telegram Remote Monitoring & Management Bot for Linux Servers",
+  "scripts": {
+    "start": "bash run_bot.sh"
+  },
+  "author": "",
+  "license": "MIT"
+} 
