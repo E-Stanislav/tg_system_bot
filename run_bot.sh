@@ -26,7 +26,7 @@ if ! command -v pm2 &> /dev/null; then
 fi
 
 # Запуск или перезапуск main.py через pm2
-if pm2 list | grep -q tg_system_bot; then
+if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
     echo "Перезапуск tg_system_bot через pm2..."
     pm2 reload tg_system_bot
 else
@@ -38,4 +38,7 @@ fi
 pm2 save
 
 # Настраиваем автозапуск pm2 при старте системы (однократно, если не настроено)
-pm2 startup
+if [ ! -f "/etc/systemd/system/pm2-$(whoami).service" ]; then
+    pm2 startup
+    echo "Выполните команду, которую выведет pm2 startup, с sudo (пример: sudo env PATH=$PATH:/home/$(whoami)/.nvm/versions/node/$(node -v)/bin pm2 startup systemd -u $(whoami) --hp /home/$(whoami))"
+fi
