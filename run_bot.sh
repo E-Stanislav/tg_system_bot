@@ -25,5 +25,11 @@ if ! command -v pm2 &> /dev/null; then
     npm install -g pm2
 fi
 
-# Запуск main.py через pm2
-pm2 start main.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
+# Запуск или перезапуск main.py через pm2
+if pm2 list | grep -q tg_system_bot; then
+    echo "Перезапуск tg_system_bot через pm2..."
+    pm2 reload tg_system_bot
+else
+    echo "Запуск tg_system_bot через pm2..."
+    pm2 start main.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
+fi
