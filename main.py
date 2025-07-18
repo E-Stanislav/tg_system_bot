@@ -553,6 +553,7 @@ def kb_main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.CONFIRM_REBOOT.value),
          InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.CONFIRM_SHUTDOWN.value)],
         [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.CONFIRM_UPDATE.value)],
+        [InlineKeyboardButton(text="🌐 IP", callback_data="GET_IP")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -826,6 +827,17 @@ async def get_public_ip_async() -> Optional[str]:
         return ip
     except Exception:  # pragma: no cover - environment dependent
         return None
+
+@router.callback_query(F.data == "GET_IP")
+async def cb_get_ip(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    public_ip = await get_public_ip_async()
+    if public_ip:
+        await callback.message.answer(f"Публичный IP: <code>{public_ip}</code>", reply_markup=kb_main_menu())
+    else:
+        await callback.message.answer("Не удалось определить публичный IP.", reply_markup=kb_main_menu())
+    await callback.answer()  # Закрыть спиннер
 
 # ----------------------------------------------------------------------------
 # Bot command list (for Telegram client UI)
