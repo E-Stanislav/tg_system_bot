@@ -448,7 +448,8 @@ def fmt_timedelta(td: timedelta) -> str:
 
 def render_status_html(status: SystemStatus) -> str:
     lines = []
-    lines.append("<b>📊 Статистика сервера</b>")
+    now = datetime.now().strftime('%H:%M:%S')
+    lines.append(f"<b>📊 Статистика сервера</b>\nВремя: <code>{now}</code>")
     lines.append(f"CPU: <code>{status.cpu.percent:.1f}%</code>")
     lines.append(f"RAM: <code>{fmt_bytes(status.memory.used)}/{fmt_bytes(status.memory.total)} ({status.memory.percent:.1f}%)</code>")
     lines.append(f"Swap: <code>{fmt_bytes(status.swap.used)}/{fmt_bytes(status.swap.total)} ({status.swap.percent:.1f}%)</code>")
