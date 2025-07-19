@@ -52,13 +52,13 @@ if ! command -v pm2 &>/dev/null; then
     npm install -g pm2
 fi
 
-# Запуск или перезапуск main.py через pm2
+# Запуск или перезапуск bot.py через pm2
 if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
     print_info "Перезапуск tg_system_bot через pm2..."
     pm2 reload tg_system_bot
 else
     print_info "Запуск tg_system_bot через pm2..."
-    pm2 start main.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
+    pm2 start bot.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
 fi
 
 # Сохраняем текущие процессы pm2 для автозапуска после перезагрузки
