@@ -19,6 +19,7 @@ class CBA(str, Enum):
     SHOW_PROCESSES = "PRC"
     SHOW_DOCKER = "DOC"
     SHOW_NETWORK = "NET"
+    OUTLINE_AUDIT = "OUTLINE_AUDIT"
 
 # Dynamic service actions prefixed at runtime
 CB_PREFIX_RESTART = "RSVC:"  # + service
@@ -41,6 +42,7 @@ def kb_main_menu() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="📈 Процессы", callback_data=CBA.SHOW_PROCESSES.value)],
         [InlineKeyboardButton(text="🐳 Docker", callback_data=CBA.SHOW_DOCKER.value),
          InlineKeyboardButton(text="🌐 Сеть", callback_data=CBA.SHOW_NETWORK.value)],
+        [InlineKeyboardButton(text="🛡 Outline Audit", callback_data=CBA.OUTLINE_AUDIT.value)],
         [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.CONFIRM_REBOOT.value),
          InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.CONFIRM_SHUTDOWN.value)],
         [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.CONFIRM_UPDATE.value)],

@@ -468,6 +468,17 @@ async def cb_get_ip(callback: CallbackQuery):
     except Exception:
         pass
 
+@router.callback_query(F.data == CBA.OUTLINE_AUDIT.value)
+@admin_only_callback
+async def cb_outline_audit(callback: CallbackQuery):
+    logger.info("Outline Audit button pressed by admin")
+    await callback.answer("Запуск аудита Outline VPN...", show_alert=False)
+    summary_text, recs, json_path = await run_outline_audit()
+    await callback.message.answer(summary_text, reply_markup=kb_main_menu())
+    if json_path:
+        with open(json_path, 'rb') as f:
+            await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+
 # ----------------------------------------------------------------------------
 # Bot command list setup
 # ----------------------------------------------------------------------------
