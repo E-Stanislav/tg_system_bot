@@ -509,8 +509,10 @@ async def get_docker_info() -> DockerInfo:
         lines = out.strip().splitlines()
         if len(lines) > 1:  # Пропускаем заголовок
             for line in lines[1:]:
-                parts = re.split(r'\s{2,}|\t', line)
-                if len(parts) >= 4:
+                parts = re.split(r'\s{2,}|\t', line, maxsplit=3)
+                if len(parts) == 3:
+                    parts.insert(2, '')  # PORTS пустой
+                if len(parts) == 4:
                     containers.append({
                         'name': parts[0],
                         'status': parts[1],
