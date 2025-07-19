@@ -64,7 +64,7 @@ fi
 # Запуск или перезапуск bot.py через pm2
 if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
     print_info "Перезапуск tg_system_bot через pm2..."
-    pm2 reload tg_system_bot
+    pm2 reload tg_system_bot || true
 else
     print_info "Запуск tg_system_bot через pm2..."
     pm2 start bot.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
