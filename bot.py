@@ -469,8 +469,9 @@ async def cb_get_ip(callback: CallbackQuery):
         pass
 
 @router.callback_query(F.data == CBA.OUTLINE_AUDIT.value)
-@admin_only_callback
 async def cb_outline_audit(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
     logger.info("Outline Audit button pressed by admin")
     await callback.answer("Запуск аудита Outline VPN...", show_alert=False)
     summary_text, recs, json_path = await run_outline_audit()
