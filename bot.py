@@ -78,28 +78,59 @@ async def run_outline_audit():
     try:
         data = json.loads(stdout.decode())
 
-        # --- Формируем краткое резюме и список рекомендаций/проблем ---
+        # --- Формируем списки OK и проблем ---
         tests: dict = data.get('tests', {})
         summary = tests.get('summary', {})
 
-        # Собираем проблемы (WARN/FAIL) + любые сообщения содержащие слово «рекомендац»
+        ok_results: list[str] = []
         recs: list[str] = []
+        speedtest_checked = False
+        speedtest_ok = False
         for tid, t in tests.items():
             status = t.get('status', '').upper()
             message = t.get('message', '')
 
+            # OK-результаты
+            if status == "OK" and message:
+                ok_results.append(f"{tid}: {message}")
+            # speedtest отдельная логика для альтернативы
+            if tid == "speedtest":
+                speedtest_checked = True
+                if status == "OK":
+                    speedtest_ok = True
             # 1) Явные рекомендации в тексте
             if 'рекомендац' in message.lower():
                 recs.append(message)
-
             # 2) Любой WARN/FAIL считаем «рекомендацией/проблемой»
             if status in {"WARN", "FAIL"} and message:
                 recs.append(f"{tid}: {message}")
-
             # 3) Поищем ключи/значения содержащие рекомендацию
             for v in t.values():
                 if isinstance(v, str) and 'рекомендац' in v.lower():
                     recs.append(v)
+
+        # Альтернативная проверка speedtest через curl, если speedtest отсутствует
+        if speedtest_checked and not speedtest_ok:
+            import shutil
+            if shutil.which('curl'):
+                import time
+                test_url = 'http://speedtest.tele2.net/10MB.zip'
+                try:
+                    t0 = time.time()
+                    proc = await asyncio.create_subprocess_exec(
+                        'curl', '-o', '/dev/null', '-s', test_url,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await proc.communicate()
+                    t1 = time.time()
+                    duration = t1 - t0
+                    speed_mbps = round(10 / duration * 8, 2) if duration > 0 else 0
+                    ok_results.append(f"curl_speedtest: ~{speed_mbps} Mbps (10MB за {duration:.1f} сек)")
+                except Exception as e:
+                    recs.append(f"curl_speedtest: ошибка проверки скорости через curl: {e}")
+            else:
+                recs.append("curl_speedtest: curl не установлен, невозможно проверить скорость альтернативно.")
 
         # Убираем дубликаты при сохранении порядка
         seen = set()
@@ -116,8 +147,10 @@ async def run_outline_audit():
             f"{summary.get('message', '')}\n"
         )
 
+        if ok_results:
+            summary_text += '\n<b>OK:</b>\n' + '\n'.join(f'- {r}' for r in ok_results)
         if uniq_recs:
-            summary_text += '\n<b>Рекомендации / проблемы:</b>\n' + '\n'.join(f'- {r}' for r in uniq_recs)
+            summary_text += '\n\n<b>Рекомендации / проблемы:</b>\n' + '\n'.join(f'- {r}' for r in uniq_recs)
 
         # Сохраняем полный JSON во временный файл (для кнопки «скачать отчёт»)
         with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.json') as f:
