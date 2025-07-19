@@ -77,28 +77,63 @@ async def run_outline_audit():
     # stdout содержит JSON или текст
     try:
         data = json.loads(stdout.decode())
-        # Собираем summary и рекомендации
-        tests = data.get('tests', {})
+
+        # --- Формируем краткое резюме и список рекомендаций/проблем ---
+        tests: dict = data.get('tests', {})
         summary = tests.get('summary', {})
-        recs = []
-        for t in tests.values():
-            if 'message' in t and 'рекомендац' in t['message'].lower():
-                recs.append(t['message'])
-        for t in tests.values():
-            for k, v in t.items():
+
+        # Собираем проблемы (WARN/FAIL) + любые сообщения содержащие слово «рекомендац»
+        recs: list[str] = []
+        for tid, t in tests.items():
+            status = t.get('status', '').upper()
+            message = t.get('message', '')
+
+            # 1) Явные рекомендации в тексте
+            if 'рекомендац' in message.lower():
+                recs.append(message)
+
+            # 2) Любой WARN/FAIL считаем «рекомендацией/проблемой»
+            if status in {"WARN", "FAIL"} and message:
+                recs.append(f"{tid}: {message}")
+
+            # 3) Поищем ключи/значения содержащие рекомендацию
+            for v in t.values():
                 if isinstance(v, str) and 'рекомендац' in v.lower():
                     recs.append(v)
-        summary_text = f"<b>Outline Audit</b>\nСтатус: <b>{summary.get('status','?')}</b>\n{summary.get('message','')}\n"
-        if recs:
-            summary_text += '\n<b>Рекомендации:</b>\n' + '\n'.join(f'- {r}' for r in set(recs))
-        # Сохраняем полный JSON во временный файл
+
+        # Убираем дубликаты при сохранении порядка
+        seen = set()
+        uniq_recs = []
+        for r in recs:
+            if r not in seen:
+                uniq_recs.append(r)
+                seen.add(r)
+
+        # --- Собираем HTML для Telegram ---
+        summary_text = (
+            f"<b>Outline Audit</b>\n"
+            f"Статус: <b>{summary.get('status', '?')}</b>\n"
+            f"{summary.get('message', '')}\n"
+        )
+
+        if uniq_recs:
+            summary_text += '\n<b>Рекомендации / проблемы:</b>\n' + '\n'.join(f'- {r}' for r in uniq_recs)
+
+        # Сохраняем полный JSON во временный файл (для кнопки «скачать отчёт»)
         with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.json') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             json_path = f.name
-        return (summary_text, recs, json_path, None)
+
+        return (summary_text, uniq_recs, json_path, None)
+
     except Exception as e:
         # Если не удалось распарсить JSON, возвращаем текстовый вывод
-        return (f"❌ Не удалось распарсить JSON из outline_audit.sh: {e}", [], None, stdout.decode(errors='ignore'))
+        return (
+            f"❌ Не удалось распарсить JSON из outline_audit.sh: {e}",
+            [],
+            None,
+            stdout.decode(errors='ignore')
+        )
 
 # ----------------------------------------------------------------------------
 # Bot setup
