@@ -70,8 +70,10 @@ else
     pm2 start bot.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
 fi
 
-# Сохраняем текущие процессы pm2 для автозапуска после перезагрузки
-pm2 save
+# Сохраняем текущие процессы pm2 для автозапуска после перезагрузки, если есть хотя бы один онлайн-процесс
+if [ "$(pm2 list | grep -c online)" -gt 0 ]; then
+    pm2 save
+fi
 
 # Настраиваем автозапуск pm2 при старте системы (однократно, если не настроено)
 if [ ! -f "/etc/systemd/system/pm2-$(whoami).service" ]; then
