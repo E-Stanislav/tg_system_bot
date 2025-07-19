@@ -406,6 +406,128 @@ def get_os_info() -> Tuple[str, str]:
     kernel = platform.release()
     return os_name, kernel
 
+@dataclass
+class NetworkInfo:
+    connections_count: int
+    listening_ports: List[int]
+    bandwidth_rx: Optional[float]  # MB/s
+    bandwidth_tx: Optional[float]  # MB/s
+    interface_stats: Dict[str, Dict[str, int]]
+
+def get_network_info() -> NetworkInfo:
+    """Получить информацию о сети"""
+    try:
+        # Активные соединения
+        connections = psutil.net_connections()
+        connections_count = len(connections)
+        
+        # Прослушиваемые порты
+        listening_ports = []
+        for conn in connections:
+            if conn.status == 'LISTEN' and conn.laddr.port not in listening_ports:
+                listening_ports.append(conn.laddr.port)
+        
+        # Статистика интерфейсов
+        interface_stats = {}
+        net_io = psutil.net_io_counters(pernic=True)
+        for interface, stats in net_io.items():
+            interface_stats[interface] = {
+                'bytes_sent': stats.bytes_sent,
+                'bytes_recv': stats.bytes_recv,
+                'packets_sent': stats.packets_sent,
+                'packets_recv': stats.packets_recv
+            }
+        
+        return NetworkInfo(
+            connections_count=connections_count,
+            listening_ports=sorted(listening_ports),
+            bandwidth_rx=None,  # TODO: implement bandwidth calculation
+            bandwidth_tx=None,
+            interface_stats=interface_stats
+        )
+    except Exception as e:
+        logger.warning(f"Ошибка получения сетевой информации: {e}")
+        return NetworkInfo(0, [], None, None, {})
+
+# --- Process and Docker monitoring --------------------------------------------
+
+@dataclass
+class ProcessInfo:
+    pid: int
+    name: str
+    cpu_percent: float
+    memory_percent: float
+    memory_rss: int
+    status: str
+
+@dataclass
+class DockerInfo:
+    containers_running: int
+    containers_total: int
+    containers: List[Dict[str, str]]
+
+def get_top_processes(limit: int = 10) -> List[ProcessInfo]:
+    """Получить топ процессов по использованию ресурсов"""
+    try:
+        processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'memory_info', 'status']):
+            try:
+                info = proc.info
+                processes.append(ProcessInfo(
+                    pid=info['pid'],
+                    name=info['name'],
+                    cpu_percent=info['cpu_percent'],
+                    memory_percent=info['memory_percent'],
+                    memory_rss=info['memory_info'].rss,
+                    status=info['status']
+                ))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        
+        # Сортировка по CPU, затем по памяти
+        processes.sort(key=lambda x: (x.cpu_percent, x.memory_percent), reverse=True)
+        return processes[:limit]
+    except Exception as e:
+        logger.warning(f"Ошибка получения процессов: {e}")
+        return []
+
+async def get_docker_info() -> DockerInfo:
+    """Получить информацию о Docker контейнерах"""
+    try:
+        # Проверяем, установлен ли Docker
+        rc, out, err = await run_command("which docker", timeout=5)
+        if rc != 0:
+            return DockerInfo(0, 0, [])
+        
+        # Получаем список контейнеров
+        rc, out, err = await run_command("docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}'", timeout=10)
+        if rc != 0:
+            return DockerInfo(0, 0, [])
+        
+        containers = []
+        lines = out.strip().splitlines()
+        if len(lines) > 1:  # Пропускаем заголовок
+            for line in lines[1:]:
+                parts = line.split('\t')
+                if len(parts) >= 4:
+                    containers.append({
+                        'name': parts[0],
+                        'status': parts[1],
+                        'ports': parts[2],
+                        'image': parts[3]
+                    })
+        
+        running = sum(1 for c in containers if 'Up' in c['status'])
+        
+        return DockerInfo(
+            containers_running=running,
+            containers_total=len(containers),
+            containers=containers
+        )
+    except Exception as e:
+        logger.warning(f"Ошибка получения Docker информации: {e}")
+        return DockerInfo(0, 0, [])
+
 # --- Aggregate ---------------------------------------------------------------
 
 def gather_system_status() -> SystemStatus:
@@ -523,6 +645,12 @@ async def list_running_services() -> Tuple[int, str, str]:
     cmd = sudo_prefix() + "systemctl list-units --type=service --state=running --no-pager"
     return await run_command(cmd)
 
+async def docker_action(action: str, container: str) -> Tuple[int, str, str]:
+    """Выполнить действие с Docker контейнером"""
+    safe_container = shlex.quote(container)
+    cmd = f"docker {action} {safe_container}"
+    return await run_command(cmd)
+
 # ----------------------------------------------------------------------------
 # Inline Keyboards
 # ----------------------------------------------------------------------------
@@ -539,17 +667,27 @@ class CBA(str, Enum):
     CONFIRM_UPDATE = "CUP"
     REFRESH_STATUS = "RST"
     SHOW_SERVICES = "SRV"
+    SHOW_PROCESSES = "PRC"
+    SHOW_DOCKER = "DOC"
+    SHOW_NETWORK = "NET"
     # dynamic service actions prefixed at runtime
 
 CB_PREFIX_RESTART = "RSVC:"  # + service
 CB_PREFIX_START = "SSVC:"
 CB_PREFIX_STOP = "XSVC:"
+# Docker prefixes
+CB_PREFIX_DOCKER_START = "DSTART:"
+CB_PREFIX_DOCKER_STOP = "DSTOP:"
+CB_PREFIX_DOCKER_RESTART = "DRESTART:"
 
 
 def kb_main_menu() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="📊 Статус", callback_data=CBA.REFRESH_STATUS.value)],
-        [InlineKeyboardButton(text="🧰 Сервисы", callback_data=CBA.SHOW_SERVICES.value)],
+        [InlineKeyboardButton(text="🧰 Сервисы", callback_data=CBA.SHOW_SERVICES.value),
+         InlineKeyboardButton(text="📈 Процессы", callback_data=CBA.SHOW_PROCESSES.value)],
+        [InlineKeyboardButton(text="🐳 Docker", callback_data=CBA.SHOW_DOCKER.value),
+         InlineKeyboardButton(text="🌐 Сеть", callback_data=CBA.SHOW_NETWORK.value)],
         [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.CONFIRM_REBOOT.value),
          InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.CONFIRM_SHUTDOWN.value)],
         [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.CONFIRM_UPDATE.value)],
@@ -569,6 +707,14 @@ def kb_services_action(service_name: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔁 restart", callback_data=CB_PREFIX_RESTART + service_name)],
         [InlineKeyboardButton(text="▶ start", callback_data=CB_PREFIX_START + service_name),
          InlineKeyboardButton(text="⏸ stop", callback_data=CB_PREFIX_STOP + service_name)],
+    ])
+
+
+def kb_docker_action(container_name: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 restart", callback_data=CB_PREFIX_DOCKER_RESTART + container_name)],
+        [InlineKeyboardButton(text="▶ start", callback_data=CB_PREFIX_DOCKER_START + container_name),
+         InlineKeyboardButton(text="⏸ stop", callback_data=CB_PREFIX_DOCKER_STOP + container_name)],
     ])
 
 # ----------------------------------------------------------------------------
@@ -596,11 +742,15 @@ async def cmd_help(message: Message, command: CommandObject, **kwargs):  # type:
         /help - Эта справка
         /status - Показать статистику сервера
         /services - Показать запущенные сервисы (systemd)
+        /processes - Топ процессов по использованию ресурсов
+        /docker - Информация о Docker контейнерах
+        /network - Сетевая информация и активные соединения
         /restart - Перезагрузка сервера (подтверждение)
         /shutdown - Завершение работы (подтверждение)
         /update - apt update && upgrade (подтверждение)
         /ip - Публичный IP сервера
         /service &lt;action&gt; &lt;name&gt; - Управление сервисом (start|stop|restart). Пример: /service restart nginx
+        /dockerctl &lt;action&gt; &lt;container&gt; - Управление Docker (start|stop|restart|logs). Пример: /dockerctl restart nginx
         """
     ).strip()
     await message.answer(help_text, reply_markup=kb_main_menu())
@@ -687,6 +837,108 @@ async def cmd_service(message: Message, command: CommandObject, **kwargs):  # ty
     txt = f"{prefix} при выполнении systemctl {action} {service}.\n<pre>{(out or err).strip()[:4000]}</pre>"
     await message.answer(txt, reply_markup=kb_main_menu())
 
+
+@router.message(Command("processes"))
+@admin_only
+async def cmd_processes(message: Message, command: CommandObject, **kwargs):  # type: ignore[override]
+    logger.info("/processes from admin")
+    processes = get_top_processes(15)
+    if not processes:
+        await message.answer("Не удалось получить информацию о процессах.", reply_markup=kb_main_menu())
+        return
+    
+    lines = ["<b>📈 Топ процессов по использованию ресурсов:</b>"]
+    for i, proc in enumerate(processes, 1):
+        lines.append(f"{i}. <b>{proc.name}</b> (PID: {proc.pid})")
+        lines.append(f"   CPU: <code>{proc.cpu_percent:.1f}%</code> | RAM: <code>{proc.memory_percent:.1f}%</code> | Статус: <code>{proc.status}</code>")
+    
+    await message.answer('\n'.join(lines), reply_markup=kb_main_menu())
+
+
+@router.message(Command("docker"))
+@admin_only
+async def cmd_docker(message: Message, command: CommandObject, **kwargs):  # type: ignore[override]
+    logger.info("/docker from admin")
+    docker_info = await get_docker_info()
+    
+    if docker_info.containers_total == 0:
+        await message.answer("Docker не установлен или нет контейнеров.", reply_markup=kb_main_menu())
+        return
+    
+    lines = [f"<b>🐳 Docker контейнеры:</b>"]
+    lines.append(f"Запущено: <code>{docker_info.containers_running}/{docker_info.containers_total}</code>")
+    
+    if docker_info.containers:
+        lines.append("\n<b>Контейнеры:</b>")
+        for container in docker_info.containers:
+            status_icon = "🟢" if "Up" in container['status'] else "🔴"
+            lines.append(f"{status_icon} <b>{container['name']}</b>")
+            lines.append(f"   Статус: <code>{container['status']}</code>")
+            lines.append(f"   Образ: <code>{container['image']}</code>")
+            if container['ports']:
+                lines.append(f"   Порты: <code>{container['ports']}</code>")
+            lines.append("")
+    
+    await message.answer('\n'.join(lines), reply_markup=kb_main_menu())
+
+
+@router.message(Command("network"))
+@admin_only
+async def cmd_network(message: Message, command: CommandObject, **kwargs):  # type: ignore[override]
+    logger.info("/network from admin")
+    network_info = get_network_info()
+    
+    lines = ["<b>🌐 Сетевая информация:</b>"]
+    lines.append(f"Активные соединения: <code>{network_info.connections_count}</code>")
+    
+    if network_info.listening_ports:
+        lines.append(f"Прослушиваемые порты: <code>{', '.join(map(str, network_info.listening_ports[:20]))}</code>")
+        if len(network_info.listening_ports) > 20:
+            lines.append(f"... и еще {len(network_info.listening_ports) - 20} портов")
+    
+    if network_info.interface_stats:
+        lines.append("\n<b>Интерфейсы:</b>")
+        for interface, stats in network_info.interface_stats.items():
+            lines.append(f"<b>{interface}:</b>")
+            lines.append(f"   Отправлено: <code>{fmt_bytes(stats['bytes_sent'])}</code>")
+            lines.append(f"   Получено: <code>{fmt_bytes(stats['bytes_recv'])}</code>")
+    
+    await message.answer('\n'.join(lines), reply_markup=kb_main_menu())
+
+
+@router.message(Command("dockerctl"))
+@admin_only
+async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):  # type: ignore[override]
+    logger.info("/dockerctl from admin args=%s", command.args)
+    if not command.args:
+        await message.answer("Использование: /dockerctl &lt;start|stop|restart&gt; &lt;container_name&gt;", reply_markup=kb_main_menu())
+        return
+    parts = command.args.strip().split()
+    if len(parts) < 2:
+        await message.answer("Нужно указать действие и имя контейнера. Пример: /dockerctl restart nginx", reply_markup=kb_main_menu())
+        return
+    action, container = parts[0].lower(), ' '.join(parts[1:])
+    if action not in ("start", "stop", "restart", "logs"):
+        await message.answer("Действие должно быть start|stop|restart|logs.", reply_markup=kb_main_menu())
+        return
+    
+    if action == "logs":
+        # Для логов используем docker logs
+        rc, out, err = await run_command(f"docker logs --tail 50 {shlex.quote(container)}")
+        if rc == 0:
+            text = f"<b>📋 Логи контейнера {container}:</b>\n<pre>{out.strip()[:4000]}</pre>"
+        else:
+            text = f"❌ Ошибка получения логов (rc={rc}).\n<pre>{err.strip()[:4000]}</pre>"
+    else:
+        rc, out, err = await docker_action(action, container)
+        if rc == 0:
+            prefix = "✅ Успех"
+        else:
+            prefix = f"❌ Ошибка rc={rc}"
+        text = f"{prefix} при выполнении docker {action} {container}.\n<pre>{(out or err).strip()[:4000]}</pre>"
+    
+    await message.answer(text, reply_markup=kb_main_menu())
+
 # ----------------------------------------------------------------------------
 # Callback Query Handlers
 # ----------------------------------------------------------------------------
@@ -714,6 +966,86 @@ async def cb_show_services(callback: CallbackQuery):
         if len(lines) > max_lines:
             shown.append(f"... ({len(lines)-max_lines} строк скрыто)")
         text = "<b>Активные сервисы</b>\n<pre>" + "\n".join(shown) + "</pre>\nИспользуйте /service ..."
+    try:
+        await callback.message.edit_text(text, reply_markup=kb_main_menu())  # type: ignore[arg-type]
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb_main_menu())
+    await callback.answer()
+
+
+@router.callback_query(F.data == CBA.SHOW_PROCESSES.value)
+async def cb_show_processes(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    processes = get_top_processes(15)
+    if not processes:
+        text = "Не удалось получить информацию о процессах."
+    else:
+        lines = ["<b>📈 Топ процессов по использованию ресурсов:</b>"]
+        for i, proc in enumerate(processes, 1):
+            lines.append(f"{i}. <b>{proc.name}</b> (PID: {proc.pid})")
+            lines.append(f"   CPU: <code>{proc.cpu_percent:.1f}%</code> | RAM: <code>{proc.memory_percent:.1f}%</code> | Статус: <code>{proc.status}</code>")
+        text = '\n'.join(lines)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb_main_menu())  # type: ignore[arg-type]
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb_main_menu())
+    await callback.answer()
+
+
+@router.callback_query(F.data == CBA.SHOW_DOCKER.value)
+async def cb_show_docker(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    docker_info = await get_docker_info()
+    
+    if docker_info.containers_total == 0:
+        text = "Docker не установлен или нет контейнеров."
+    else:
+        lines = [f"<b>🐳 Docker контейнеры:</b>"]
+        lines.append(f"Запущено: <code>{docker_info.containers_running}/{docker_info.containers_total}</code>")
+        
+        if docker_info.containers:
+            lines.append("\n<b>Контейнеры:</b>")
+            for container in docker_info.containers:
+                status_icon = "🟢" if "Up" in container['status'] else "🔴"
+                lines.append(f"{status_icon} <b>{container['name']}</b>")
+                lines.append(f"   Статус: <code>{container['status']}</code>")
+                lines.append(f"   Образ: <code>{container['image']}</code>")
+                if container['ports']:
+                    lines.append(f"   Порты: <code>{container['ports']}</code>")
+                lines.append("")
+        text = '\n'.join(lines)
+    
+    try:
+        await callback.message.edit_text(text, reply_markup=kb_main_menu())  # type: ignore[arg-type]
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb_main_menu())
+    await callback.answer()
+
+
+@router.callback_query(F.data == CBA.SHOW_NETWORK.value)
+async def cb_show_network(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    network_info = get_network_info()
+    
+    lines = ["<b>🌐 Сетевая информация:</b>"]
+    lines.append(f"Активные соединения: <code>{network_info.connections_count}</code>")
+    
+    if network_info.listening_ports:
+        lines.append(f"Прослушиваемые порты: <code>{', '.join(map(str, network_info.listening_ports[:20]))}</code>")
+        if len(network_info.listening_ports) > 20:
+            lines.append(f"... и еще {len(network_info.listening_ports) - 20} портов")
+    
+    if network_info.interface_stats:
+        lines.append("\n<b>Интерфейсы:</b>")
+        for interface, stats in network_info.interface_stats.items():
+            lines.append(f"<b>{interface}:</b>")
+            lines.append(f"   Отправлено: <code>{fmt_bytes(stats['bytes_sent'])}</code>")
+            lines.append(f"   Получено: <code>{fmt_bytes(stats['bytes_recv'])}</code>")
+    
+    text = '\n'.join(lines)
     try:
         await callback.message.edit_text(text, reply_markup=kb_main_menu())  # type: ignore[arg-type]
     except Exception:
@@ -798,6 +1130,43 @@ async def cb_stop_service(callback: CallbackQuery):
     await callback.message.answer(txt, reply_markup=kb_main_menu())
     await callback.answer()
 
+
+# Docker action callbacks
+@router.callback_query(F.data.startswith(CB_PREFIX_DOCKER_RESTART))
+async def cb_restart_docker(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    container = callback.data[len(CB_PREFIX_DOCKER_RESTART):]
+    logger.info("Restart docker container via button: %s", container)
+    rc, out, err = await docker_action("restart", container)
+    txt = f"docker restart {container} rc={rc}.\n<pre>{(out or err).strip()[:4000]}</pre>"
+    await callback.message.answer(txt, reply_markup=kb_main_menu())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_PREFIX_DOCKER_START))
+async def cb_start_docker(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    container = callback.data[len(CB_PREFIX_DOCKER_START):]
+    logger.info("Start docker container via button: %s", container)
+    rc, out, err = await docker_action("start", container)
+    txt = f"docker start {container} rc={rc}.\n<pre>{(out or err).strip()[:4000]}</pre>"
+    await callback.message.answer(txt, reply_markup=kb_main_menu())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith(CB_PREFIX_DOCKER_STOP))
+async def cb_stop_docker(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    container = callback.data[len(CB_PREFIX_DOCKER_STOP):]
+    logger.info("Stop docker container via button: %s", container)
+    rc, out, err = await docker_action("stop", container)
+    txt = f"docker stop {container} rc={rc}.\n<pre>{(out or err).strip()[:4000]}</pre>"
+    await callback.message.answer(txt, reply_markup=kb_main_menu())
+    await callback.answer()
+
 # ----------------------------------------------------------------------------
 # Public IP helper
 # ----------------------------------------------------------------------------
@@ -849,11 +1218,15 @@ async def set_bot_commands() -> None:
         BotCommand(command="help", description="Справка"),
         BotCommand(command="status", description="Статистика сервера"),
         BotCommand(command="services", description="Запущенные сервисы"),
+        BotCommand(command="processes", description="Топ процессов"),
+        BotCommand(command="docker", description="Docker контейнеры"),
+        BotCommand(command="network", description="Сетевая информация"),
         BotCommand(command="restart", description="Перезагрузка сервера"),
         BotCommand(command="shutdown", description="Выключение сервера"),
         BotCommand(command="update", description="Обновление пакетов"),
         BotCommand(command="ip", description="Публичный IP"),
         BotCommand(command="service", description="Управление сервисом"),
+        BotCommand(command="dockerctl", description="Управление Docker"),
     ]
     await bot.set_my_commands(commands=commands, scope=BotCommandScopeDefault())
 
@@ -865,6 +1238,7 @@ ALERT_CPU_THRESHOLD = 90.0  # %
 ALERT_RAM_THRESHOLD = 90.0  # %
 ALERT_DISK_THRESHOLD = 10.0  # % свободного места
 ALERT_SERVICES = ["nginx", "postgresql", "mysql", "docker"]  # важные сервисы, можно расширить
+ALERT_DOCKER_CONTAINERS = ["nginx", "postgres", "mysql", "redis"]  # важные контейнеры
 STATUS_SCHEDULE_SECONDS = 24 * 60 * 60  # раз в сутки
 
 async def background_monitoring():
@@ -904,6 +1278,26 @@ async def background_monitoring():
                         last_alerts["service"].add(svc)
                 else:
                     last_alerts["service"].discard(svc)
+            
+            # Docker контейнеры
+            docker_info = await get_docker_info()
+            if docker_info.containers_total > 0:
+                for container_name in ALERT_DOCKER_CONTAINERS:
+                    container_found = False
+                    for container in docker_info.containers:
+                        if container['name'] == container_name:
+                            container_found = True
+                            if 'Up' not in container['status']:
+                                if container_name not in last_alerts["service"]:
+                                    await bot.send_message(ADMIN_ID_INT, f"❗️ Важный Docker контейнер <b>{container_name}</b> не работает!")
+                                    last_alerts["service"].add(container_name)
+                            else:
+                                last_alerts["service"].discard(container_name)
+                            break
+                    if not container_found:
+                        if container_name not in last_alerts["service"]:
+                            await bot.send_message(ADMIN_ID_INT, f"❗️ Важный Docker контейнер <b>{container_name}</b> не найден!")
+                            last_alerts["service"].add(container_name)
         except Exception as e:
             logger.warning(f"Ошибка в background_monitoring: {e}")
         await asyncio.sleep(60)  # Проверять каждую минуту
