@@ -337,16 +337,26 @@ async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):
 @admin_only
 async def cmd_outline_audit(message: Message, command: CommandObject, **kwargs):
     logger.info("/outline_audit from admin")
-    await message.answer("⏳ Аудит Outline VPN, подождите...")
+    wait_msg = await message.answer("⏳ Запуск аудита Outline VPN...")
     summary_text, recs, json_path, raw_text = await run_outline_audit()
-    if raw_text and not json_path:
-        # Если не удалось распарсить JSON, отправляем читаемый текстовый вывод
-        await message.answer(f"<pre>{raw_text}</pre>", reply_markup=kb_main_menu())
-    else:
-        await message.answer(summary_text, reply_markup=kb_main_menu())
-        if json_path:
-            with open(json_path, 'rb') as f:
-                await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+    try:
+        if raw_text and not json_path:
+            # Если не удалось распарсить JSON, отправляем читаемый текстовый вывод
+            await wait_msg.edit_text(f"<pre>{raw_text}</pre>", reply_markup=kb_main_menu())
+        else:
+            await wait_msg.edit_text(summary_text, reply_markup=kb_main_menu())
+            if json_path:
+                with open(json_path, 'rb') as f:
+                    await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+    except Exception:
+        # Если не удалось отредактировать (например, сообщение слишком старое), просто отправляем новое
+        if raw_text and not json_path:
+            await message.answer(f"<pre>{raw_text}</pre>", reply_markup=kb_main_menu())
+        else:
+            await message.answer(summary_text, reply_markup=kb_main_menu())
+            if json_path:
+                with open(json_path, 'rb') as f:
+                    await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
 
 # ----------------------------------------------------------------------------
 # Callback Query Handlers
