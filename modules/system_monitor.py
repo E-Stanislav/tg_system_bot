@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple, Dict
 
+import aiohttp
 from core.config import TEMP_SENSORS_COMMAND
 
 logger = logging.getLogger("system_monitor")
@@ -291,6 +292,19 @@ async def get_docker_info() -> DockerInfo:
     except Exception as e:
         logger.warning(f"Ошибка получения Docker информации: {e}")
         return DockerInfo(0, 0, [])
+
+async def get_country_by_ip(ip: str) -> Optional[str]:
+    """Получить страну по IP через ip-api.com (или аналогичный сервис)"""
+    try:
+        url = f"http://ip-api.com/json/{ip}?fields=country"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("country")
+    except Exception as e:
+        logger.warning(f"Ошибка получения страны по IP: {e}")
+    return None
 
 def gather_system_status() -> SystemStatus:
     cpu = get_cpu_load()

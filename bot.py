@@ -53,7 +53,8 @@ from modules.system_monitor import (
     gather_system_status, get_top_processes, get_docker_info, get_network_info,
     sudo_reboot, sudo_shutdown_now, sudo_apt_update_upgrade,
     sudo_systemctl, list_running_services, docker_action, run_command,
-    get_public_ip_async
+    get_public_ip_async,
+    get_country_by_ip,  # добавляем импорт
 )
 from modules.formatters import (
     render_status_html, render_processes_html, render_docker_html,
@@ -243,14 +244,22 @@ async def cmd_ip(message: Message, command: CommandObject, **kwargs):
     ipv4, ipv6 = await get_public_ip_async()
     text = []
     if ipv4:
-        text.append(f"Публичный IPv4: <code>{ipv4}</code>")
+        country4 = await get_country_by_ip(ipv4)
+        if country4:
+            text.append(f"Публичный IPv4: <code>{ipv4}</code>\nСтрана: <b>{country4}</b>")
+        else:
+            text.append(f"Публичный IPv4: <code>{ipv4}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv4: <i>не найден</i>")
     if ipv6:
-        text.append(f"Публичный IPv6: <code>{ipv6}</code>")
+        country6 = await get_country_by_ip(ipv6)
+        if country6:
+            text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <b>{country6}</b>")
+        else:
+            text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv6: <i>не найден</i>")
-    await message.answer("\n".join(text), reply_markup=kb_main_menu())
+    await message.answer("\n\n".join(text), reply_markup=kb_main_menu())
 
 @router.message(Command("service"))
 @admin_only
