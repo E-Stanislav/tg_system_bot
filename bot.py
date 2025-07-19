@@ -12,6 +12,8 @@ import logging
 import shlex
 import sys
 from typing import Optional
+import json
+import tempfile
 
 # Import configuration first
 from core.config import (
@@ -59,6 +61,45 @@ from modules.formatters import (
     render_command_result_html
 )
 from modules.monitoring import background_monitoring, scheduled_status
+
+async def run_outline_audit():
+    """
+    Запускает outline_audit.sh, возвращает (summary_text, recommendations, full_json_path)
+    """
+    proc = await asyncio.create_subprocess_exec(
+        './outline_audit.sh', '--json-only',
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode not in (0, 1, 2):
+        return (f"❌ Ошибка запуска outline_audit.sh (код {proc.returncode})\n<pre>{stderr.decode(errors='ignore')}</pre>", [], None)
+    # stdout содержит JSON
+    try:
+        data = json.loads(stdout.decode())
+    except Exception as e:
+        return (f"❌ Не удалось распарсить JSON из outline_audit.sh: {e}", [], None)
+    # Собираем summary и рекомендации
+    tests = data.get('tests', {})
+    summary = tests.get('summary', {})
+    recs = []
+    for t in tests.values():
+        if 'message' in t and 'рекомендац' in t['message'].lower():
+            recs.append(t['message'])
+    # Также собираем RECOMMENDATIONS из тестов, если есть
+    for t in tests.values():
+        for k, v in t.items():
+            if isinstance(v, str) and 'рекомендац' in v.lower():
+                recs.append(v)
+    # Формируем summary
+    summary_text = f"<b>Outline Audit</b>\nСтатус: <b>{summary.get('status','?')}</b>\n{summary.get('message','')}\n"
+    if recs:
+        summary_text += '\n<b>Рекомендации:</b>\n' + '\n'.join(f'- {r}' for r in set(recs))
+    # Сохраняем полный JSON во временный файл
+    with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.json') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        json_path = f.name
+    return (summary_text, recs, json_path)
 
 # ----------------------------------------------------------------------------
 # Bot setup
@@ -224,6 +265,17 @@ async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):
         text = render_command_result_html(f"docker {action}", container, rc, out, err)
     
     await message.answer(text, reply_markup=kb_main_menu())
+
+@router.message(Command("outline_audit"))
+@admin_only
+async def cmd_outline_audit(message: Message, command: CommandObject, **kwargs):
+    logger.info("/outline_audit from admin")
+    await message.answer("⏳ Аудит Outline VPN, подождите...")
+    summary_text, recs, json_path = await run_outline_audit()
+    await message.answer(summary_text, reply_markup=kb_main_menu())
+    if json_path:
+        with open(json_path, 'rb') as f:
+            await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
 
 # ----------------------------------------------------------------------------
 # Callback Query Handlers

@@ -31,6 +31,8 @@ fi
 # Активация виртуального окружения
 source venv/bin/activate
 
+# Установка outline_audit.sh
+chmod +x outline_audit.sh
 # Проверка и создание .env файла
 if [ ! -f ".env" ]; then
     print_info "Создаю пустой .env файл..."
