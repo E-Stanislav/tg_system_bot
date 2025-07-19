@@ -132,11 +132,17 @@ async def cmd_update(message: Message, command: CommandObject, **kwargs):
 @admin_only
 async def cmd_ip(message: Message, command: CommandObject, **kwargs):
     logger.info("/ip from admin")
-    public_ip = await get_public_ip_async()
-    if public_ip:
-        await message.answer(f"Публичный IP: <code>{public_ip}</code>", reply_markup=kb_main_menu())
+    ipv4, ipv6 = await get_public_ip_async()
+    text = []
+    if ipv4:
+        text.append(f"Публичный IPv4: <code>{ipv4}</code>")
     else:
-        await message.answer("Не удалось определить публичный IP.", reply_markup=kb_main_menu())
+        text.append("Публичный IPv4: <i>не найден</i>")
+    if ipv6:
+        text.append(f"Публичный IPv6: <code>{ipv6}</code>")
+    else:
+        text.append("Публичный IPv6: <i>не найден</i>")
+    await message.answer("\n".join(text), reply_markup=kb_main_menu())
 
 @router.message(Command("service"))
 @admin_only
@@ -394,12 +400,18 @@ async def cb_stop_docker(callback: CallbackQuery):
 async def cb_get_ip(callback: CallbackQuery):
     if not await admin_only_callback(callback):
         return
-    public_ip = await get_public_ip_async()
-    if public_ip:
-        await callback.message.answer(f"Публичный IP: <code>{public_ip}</code>", reply_markup=kb_main_menu())
+    ipv4, ipv6 = await get_public_ip_async()
+    text = []
+    if ipv4:
+        text.append(f"Публичный IPv4: <code>{ipv4}</code>")
     else:
-        await callback.message.answer("Не удалось определить публичный IP.", reply_markup=kb_main_menu())
-    await callback.answer()
+        text.append("Публичный IPv4: <i>не найден</i>")
+    if ipv6:
+        text.append(f"Публичный IPv6: <code>{ipv6}</code>")
+    else:
+        text.append("Публичный IPv6: <i>не найден</i>")
+    await callback.message.answer("\n".join(text), reply_markup=kb_main_menu())
+    await callback.answer()  # Закрыть спиннер
 
 # ----------------------------------------------------------------------------
 # Bot command list setup

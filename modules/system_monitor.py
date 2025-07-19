@@ -361,28 +361,32 @@ async def docker_action(action: str, container: str) -> Tuple[int, str, str]:
     cmd = f"docker {action} {safe_container}"
     return await run_command(cmd)
 
-async def get_public_ip_async() -> Optional[str]:
-    """Try to discover public IP.
-    Strategy: attempt DNS to resolver opendns/ifconfig.me; fallback to external commands.
-    Because we avoid external HTTP libs in this minimal script, we'll try simple shell curls if available.
-    """
-    # lightweight attempt: dig +short myip.opendns.com @resolver1.opendns.com
-    # This may fail if dig isn't installed.
+async def get_public_ip_async() -> tuple[Optional[str], Optional[str]]:
+    """Try to discover both public IPv4 and IPv6 addresses."""
+    ipv4 = None
+    ipv6 = None
+    # IPv4
     for cmd in (
-        "dig +short myip.opendns.com @resolver1.opendns.com",
-        "curl -s ifconfig.me",
-        "curl -s https://api.ipify.org",
+        "dig -4 +short myip.opendns.com @resolver1.opendns.com",
+        "curl -4 -s ifconfig.me",
+        "curl -4 -s https://api.ipify.org",
     ):
         rc, out, err = await run_command(cmd, timeout=10)
         if rc == 0 and out.strip():
             ip = out.strip().split()[0]
-            # quick sanity
-            if len(ip) <= 64:  # IPv4/6
-                return ip
-    # fallback: try to guess outward interface
-    try:
-        hostname = socket.gethostname()
-        ip = socket.gethostbyname(hostname)
-        return ip
-    except Exception:  # pragma: no cover - environment dependent
-        return None 
+            if "." in ip and len(ip) <= 64:
+                ipv4 = ip
+                break
+    # IPv6
+    for cmd in (
+        "dig -6 +short myip.opendns.com @resolver1.opendns.com",
+        "curl -6 -s ifconfig.me",
+        "curl -6 -s https://api64.ipify.org",
+    ):
+        rc, out, err = await run_command(cmd, timeout=10)
+        if rc == 0 and out.strip():
+            ip = out.strip().split()[0]
+            if ":" in ip and len(ip) <= 64:
+                ipv6 = ip
+                break
+    return ipv4, ipv6 
