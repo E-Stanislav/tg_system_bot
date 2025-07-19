@@ -411,7 +411,10 @@ async def cb_get_ip(callback: CallbackQuery):
     else:
         text.append("Публичный IPv6: <i>не найден</i>")
     await callback.message.answer("\n".join(text), reply_markup=kb_main_menu())
-    await callback.answer()  # Закрыть спиннер
+    try:
+        await callback.answer()  # Закрыть спиннер
+    except Exception:
+        pass
 
 # ----------------------------------------------------------------------------
 # Bot command list setup

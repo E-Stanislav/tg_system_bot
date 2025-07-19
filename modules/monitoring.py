@@ -19,7 +19,7 @@ from modules.system_monitor import (
     gather_system_status, get_top_processes, get_docker_info,
     run_command
 )
-from modules.formatters import render_status_html
+from modules.formatters import fmt_bytes, render_status_html
 from modules.keyboards import kb_main_menu
 
 logger = logging.getLogger("monitoring")
@@ -63,7 +63,6 @@ async def background_monitoring(bot: Bot):
                 free_percent = 100.0 - d.percent
                 if free_percent < ALERT_DISK_THRESHOLD:
                     if d.mount not in last_alerts["disk"]:
-                        from formatters import fmt_bytes
                         await bot.send_message(
                             ADMIN_ID_INT, 
                             f"⚠️ Мало места на диске <b>{d.mount}</b>: "
