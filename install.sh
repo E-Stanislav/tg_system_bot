@@ -52,6 +52,15 @@ if ! command -v pm2 &>/dev/null; then
     npm install -g pm2
 fi
 
+# Удаляем старый процесс, если он запускал main.py
+if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
+    if pm2 info tg_system_bot | grep -q 'main.py'; then
+        print_info "Удаляю старый процесс tg_system_bot (main.py)..."
+        pm2 stop tg_system_bot || true
+        pm2 delete tg_system_bot || true
+    fi
+fi
+
 # Запуск или перезапуск bot.py через pm2
 if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
     print_info "Перезапуск tg_system_bot через pm2..."
