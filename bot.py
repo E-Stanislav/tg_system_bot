@@ -64,7 +64,7 @@ from modules.monitoring import background_monitoring, scheduled_status
 
 async def run_outline_audit():
     """
-    Запускает outline_audit.sh, возвращает (summary_text, recommendations, full_json_path)
+    Запускает outline_audit.sh, возвращает (summary_text, recommendations, full_json_path, raw_text)
     """
     proc = await asyncio.create_subprocess_exec(
         './outline_audit.sh', '--json-only',
@@ -73,33 +73,32 @@ async def run_outline_audit():
     )
     stdout, stderr = await proc.communicate()
     if proc.returncode not in (0, 1, 2):
-        return (f"❌ Ошибка запуска outline_audit.sh (код {proc.returncode})\n<pre>{stderr.decode(errors='ignore')}</pre>", [], None)
-    # stdout содержит JSON
+        return (f"❌ Ошибка запуска outline_audit.sh (код {proc.returncode})\n<pre>{stderr.decode(errors='ignore')}</pre>", [], None, stdout.decode(errors='ignore'))
+    # stdout содержит JSON или текст
     try:
         data = json.loads(stdout.decode())
+        # Собираем summary и рекомендации
+        tests = data.get('tests', {})
+        summary = tests.get('summary', {})
+        recs = []
+        for t in tests.values():
+            if 'message' in t and 'рекомендац' in t['message'].lower():
+                recs.append(t['message'])
+        for t in tests.values():
+            for k, v in t.items():
+                if isinstance(v, str) and 'рекомендац' in v.lower():
+                    recs.append(v)
+        summary_text = f"<b>Outline Audit</b>\nСтатус: <b>{summary.get('status','?')}</b>\n{summary.get('message','')}\n"
+        if recs:
+            summary_text += '\n<b>Рекомендации:</b>\n' + '\n'.join(f'- {r}' for r in set(recs))
+        # Сохраняем полный JSON во временный файл
+        with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.json') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            json_path = f.name
+        return (summary_text, recs, json_path, None)
     except Exception as e:
-        return (f"❌ Не удалось распарсить JSON из outline_audit.sh: {e}", [], None)
-    # Собираем summary и рекомендации
-    tests = data.get('tests', {})
-    summary = tests.get('summary', {})
-    recs = []
-    for t in tests.values():
-        if 'message' in t and 'рекомендац' in t['message'].lower():
-            recs.append(t['message'])
-    # Также собираем RECOMMENDATIONS из тестов, если есть
-    for t in tests.values():
-        for k, v in t.items():
-            if isinstance(v, str) and 'рекомендац' in v.lower():
-                recs.append(v)
-    # Формируем summary
-    summary_text = f"<b>Outline Audit</b>\nСтатус: <b>{summary.get('status','?')}</b>\n{summary.get('message','')}\n"
-    if recs:
-        summary_text += '\n<b>Рекомендации:</b>\n' + '\n'.join(f'- {r}' for r in set(recs))
-    # Сохраняем полный JSON во временный файл
-    with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.json') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        json_path = f.name
-    return (summary_text, recs, json_path)
+        # Если не удалось распарсить JSON, возвращаем текстовый вывод
+        return (f"❌ Не удалось распарсить JSON из outline_audit.sh: {e}", [], None, stdout.decode(errors='ignore'))
 
 # ----------------------------------------------------------------------------
 # Bot setup
@@ -271,11 +270,15 @@ async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):
 async def cmd_outline_audit(message: Message, command: CommandObject, **kwargs):
     logger.info("/outline_audit from admin")
     await message.answer("⏳ Аудит Outline VPN, подождите...")
-    summary_text, recs, json_path = await run_outline_audit()
-    await message.answer(summary_text, reply_markup=kb_main_menu())
-    if json_path:
-        with open(json_path, 'rb') as f:
-            await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+    summary_text, recs, json_path, raw_text = await run_outline_audit()
+    if raw_text and not json_path:
+        # Если не удалось распарсить JSON, отправляем читаемый текстовый вывод
+        await message.answer(f"<pre>{raw_text}</pre>", reply_markup=kb_main_menu())
+    else:
+        await message.answer(summary_text, reply_markup=kb_main_menu())
+        if json_path:
+            with open(json_path, 'rb') as f:
+                await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
 
 # ----------------------------------------------------------------------------
 # Callback Query Handlers
@@ -474,11 +477,14 @@ async def cb_outline_audit(callback: CallbackQuery):
         return
     logger.info("Outline Audit button pressed by admin")
     await callback.answer("Запуск аудита Outline VPN...", show_alert=False)
-    summary_text, recs, json_path = await run_outline_audit()
-    await callback.message.answer(summary_text, reply_markup=kb_main_menu())
-    if json_path:
-        with open(json_path, 'rb') as f:
-            await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+    summary_text, recs, json_path, raw_text = await run_outline_audit()
+    if raw_text and not json_path:
+        await callback.message.answer(f"<pre>{raw_text}</pre>", reply_markup=kb_main_menu())
+    else:
+        await callback.message.answer(summary_text, reply_markup=kb_main_menu())
+        if json_path:
+            with open(json_path, 'rb') as f:
+                await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
 
 # ----------------------------------------------------------------------------
 # Bot command list setup
