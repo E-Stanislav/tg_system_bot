@@ -545,14 +545,22 @@ async def cb_get_ip(callback: CallbackQuery):
     ipv4, ipv6 = await get_public_ip_async()
     text = []
     if ipv4:
-        text.append(f"Публичный IPv4: <code>{ipv4}</code>")
+        country4 = await get_country_by_ip(ipv4)
+        if country4:
+            text.append(f"Публичный IPv4: <code>{ipv4}</code>\nСтрана: <b>{country4}</b>")
+        else:
+            text.append(f"Публичный IPv4: <code>{ipv4}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv4: <i>не найден</i>")
     if ipv6:
-        text.append(f"Публичный IPv6: <code>{ipv6}</code>")
+        country6 = await get_country_by_ip(ipv6)
+        if country6:
+            text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <b>{country6}</b>")
+        else:
+            text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv6: <i>не найден</i>")
-    await callback.message.answer("\n".join(text), reply_markup=kb_main_menu())
+    await callback.message.answer("\n\n".join(text), reply_markup=kb_main_menu())
     try:
         await callback.answer()  # Закрыть спиннер
     except Exception:
