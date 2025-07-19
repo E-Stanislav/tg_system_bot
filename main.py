@@ -126,6 +126,7 @@ from typing import Callable, Optional, Tuple, List, Dict, Awaitable
 import psutil
 import platform
 import subprocess
+import re
 
 # Optional: load .env if present ------------------------------------------------
 try:
@@ -508,7 +509,7 @@ async def get_docker_info() -> DockerInfo:
         lines = out.strip().splitlines()
         if len(lines) > 1:  # Пропускаем заголовок
             for line in lines[1:]:
-                parts = line.split('\t')
+                parts = re.split(r'\s{2,}|\t', line)
                 if len(parts) >= 4:
                     containers.append({
                         'name': parts[0],
