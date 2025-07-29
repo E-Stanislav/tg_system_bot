@@ -55,11 +55,12 @@ from modules.system_monitor import (
     sudo_systemctl, list_running_services, docker_action, run_command,
     get_public_ip_async,
     get_country_by_ip,  # добавляем импорт
+    get_detailed_temperature_info,  # добавляем импорт
 )
 from modules.formatters import (
     render_status_html, render_processes_html, render_docker_html,
     render_network_html, render_services_html, render_help_html,
-    render_command_result_html
+    render_command_result_html, render_temperature_html
 )
 from modules.monitoring import background_monitoring, scheduled_status
 
@@ -342,6 +343,14 @@ async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):
     
     await message.answer(text, reply_markup=kb_main_menu())
 
+@router.message(Command("temp"))
+@admin_only
+async def cmd_temp(message: Message, command: CommandObject, **kwargs):
+    logger.info("/temp from admin")
+    temp_info = get_detailed_temperature_info()
+    text = render_temperature_html(temp_info)
+    await message.answer(text, reply_markup=kb_main_menu())
+
 @router.message(Command("outline_audit"))
 @admin_only
 async def cmd_outline_audit(message: Message, command: CommandObject, **kwargs):
@@ -427,6 +436,18 @@ async def cb_show_network(callback: CallbackQuery):
         return
     network_info = get_network_info()
     text = render_network_html(network_info)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb_main_menu())
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb_main_menu())
+    await callback.answer()
+
+@router.callback_query(F.data == CBA.SHOW_TEMPERATURE.value)
+async def cb_show_temperature(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    temp_info = get_detailed_temperature_info()
+    text = render_temperature_html(temp_info)
     try:
         await callback.message.edit_text(text, reply_markup=kb_main_menu())
     except Exception:
@@ -594,6 +615,7 @@ async def set_bot_commands() -> None:
         BotCommand(command="processes", description="Топ процессов"),
         BotCommand(command="docker", description="Docker контейнеры"),
         BotCommand(command="network", description="Сетевая информация"),
+        BotCommand(command="temp", description="Температура системы"),
         BotCommand(command="restart", description="Перезагрузка сервера"),
         BotCommand(command="shutdown", description="Выключение сервера"),
         BotCommand(command="update", description="Обновление пакетов"),

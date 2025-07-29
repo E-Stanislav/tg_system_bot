@@ -9,12 +9,35 @@ ADMIN_ID = 123456789  # Ваш Telegram ID (можно узнать у @userinfo
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 # Настройки мониторинга температуры CPU
-TEMP_SENSORS_COMMAND = "sensors -u"  # Команда для получения температуры
+# Для Orange Pi Zero 3 используйте эту команду:
+TEMP_SENSORS_COMMAND = """for zone in /sys/class/thermal/thermal_zone*/temp; do 
+    zone_name=$(basename $(dirname $zone))
+    zone_type=$(cat /sys/class/thermal/$zone_name/type 2>/dev/null || echo "Unknown")
+    temp=$(cat $zone)
+    temp_c=$(echo "scale=1; $temp/1000" | bc -l)
+    
+    # Маппинг типов на понятные названия
+    case "$zone_type" in
+        "cpu-thermal") display_name="CPU" ;;
+        "gpu-thermal") display_name="GPU" ;;
+        "ddr-thermal") display_name="RAM" ;;
+        "soc-thermal") display_name="SoC" ;;
+        "pmic-thermal") display_name="PMIC" ;;
+        *) display_name="$zone_type" ;;
+    esac
+    
+    printf "%s: %.1f°C\\n" "$display_name" "$temp_c"
+done"""
+
+# Альтернативные команды для температуры:
+# TEMP_SENSORS_COMMAND = "cat /sys/class/thermal/thermal_zone0/temp | awk '{print $1/1000}'"
+# TEMP_SENSORS_COMMAND = "sensors -u"  # если установлен lm-sensors
 
 # Пороги для уведомлений (в процентах)
 ALERT_CPU_THRESHOLD = 90.0      # Загрузка CPU
 ALERT_RAM_THRESHOLD = 90.0      # Использование RAM
 ALERT_DISK_THRESHOLD = 10.0     # Свободное место на диске
+ALERT_TEMP_THRESHOLD = 70.0     # Температура CPU в °C
 
 # Важные сервисы для мониторинга
 ALERT_SERVICES = [

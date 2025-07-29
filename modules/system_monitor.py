@@ -135,6 +135,69 @@ def get_cpu_temperature() -> Optional[float]:
             return temp
     return None
 
+def get_detailed_temperature_info() -> str:
+    """
+    Получить детальную информацию о температуре всех thermal zones
+    """
+    try:
+        import subprocess
+        import shlex
+        
+        # Команда для получения детальной информации о температуре
+        cmd = """for zone in /sys/class/thermal/thermal_zone*/temp; do 
+    zone_name=$(basename $(dirname $zone))
+    zone_type=$(cat /sys/class/thermal/$zone_name/type 2>/dev/null || echo "Unknown")
+    temp=$(cat $zone)
+    temp_c=$(echo "scale=1; $temp/1000" | bc -l)
+    
+    # Маппинг типов на понятные названия
+    case "$zone_type" in
+        "cpu-thermal") display_name="CPU" ;;
+        "gpu-thermal") display_name="GPU" ;;
+        "ddr-thermal") display_name="RAM" ;;
+        "soc-thermal") display_name="SoC" ;;
+        "pmic-thermal") display_name="PMIC" ;;
+        *) display_name="$zone_type" ;;
+    esac
+    
+    printf "%s: %.1f°C\\n" "$display_name" "$temp_c"
+done"""
+        
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        else:
+            # Fallback к простому чтению первой thermal zone
+            fallback_cmd = "cat /sys/class/thermal/thermal_zone0/temp"
+            fallback_result = subprocess.run(fallback_cmd, shell=True, capture_output=True, text=True, timeout=5)
+            if fallback_result.returncode == 0:
+                try:
+                    temp_mc = int(fallback_result.stdout.strip())
+                    temp_c = temp_mc / 1000.0
+                    return f"CPU: {temp_c:.1f}°C"
+                except ValueError:
+                    pass
+            
+            return "Не удалось получить информацию о температуре"
+            
+    except Exception as e:
+        logger.error(f"Ошибка при получении температуры: {e}")
+        return f"Ошибка: {e}"
+
+def get_temperature_status(temp_value: float) -> tuple[str, str]:
+    """
+    Возвращает эмодзи и статус для температуры
+    """
+    if temp_value < 50:
+        return "🟢", "оптимальная"
+    elif temp_value < 70:
+        return "🟡", "повышенная"
+    elif temp_value < 85:
+        return "🟠", "высокая"
+    else:
+        return "🔴", "критическая"
+
 def _read_temp_via_psutil_sensors() -> Optional[float]:
     try:
         temps = psutil.sensors_temperatures(fahrenheit=False)  # type: ignore[attr-defined]

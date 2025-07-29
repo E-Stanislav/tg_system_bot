@@ -46,7 +46,10 @@ def render_status_html(status: SystemStatus) -> str:
     lines.append(f"RAM: <code>{fmt_bytes(status.memory.used)}/{fmt_bytes(status.memory.total)} ({status.memory.percent:.1f}%)</code>")
     lines.append(f"Swap: <code>{fmt_bytes(status.swap.used)}/{fmt_bytes(status.swap.total)} ({status.swap.percent:.1f}%)</code>")
     if status.cpu_temp_c is not None:
-        lines.append(f"CPU Temp: <code>{status.cpu_temp_c:.1f}°C</code>")
+        # Добавляем статус температуры
+        from modules.system_monitor import get_temperature_status
+        emoji, temp_status = get_temperature_status(status.cpu_temp_c)
+        lines.append(f"CPU Temp: <code>{status.cpu_temp_c:.1f}°C</code> {emoji} ({temp_status})")
     lines.append(f"Uptime: <code>{fmt_timedelta(status.uptime)}</code>")
     if status.logged_in_users:
         lines.append("Users: " + ", ".join(f"<code>{u}</code>" for u in status.logged_in_users))
@@ -133,6 +136,7 @@ def render_help_html() -> str:
         /processes - Топ процессов по использованию ресурсов
         /docker - Информация о Docker контейнерах
         /network - Сетевая информация и активные соединения
+        /temp - Температура системы (CPU, GPU, RAM и др.)
         /restart - Перезагрузка сервера (подтверждение)
         /shutdown - Завершение работы (подтверждение)
         /update - apt update && upgrade (подтверждение)
@@ -149,4 +153,51 @@ def render_command_result_html(action: str, target: str, rc: int, output: str, e
         prefix = f"❌ Ошибка rc={rc}"
     
     content = (output or error).strip()[:4000]
-    return f"{prefix} при выполнении {action} {target}.\n<pre>{content}</pre>" 
+    return f"{prefix} при выполнении {action} {target}.\n<pre>{content}</pre>"
+
+def render_temperature_html(temp_info: str) -> str:
+    """
+    Форматирует информацию о температуре для Telegram
+    """
+    from datetime import datetime
+    now = datetime.now().strftime('%H:%M:%S')
+    
+    lines = [f"<b>🌡 Температура системы</b>\nВремя: <code>{now}</code>"]
+    
+    # Добавляем легенду
+    lines.append("\n<b>Легенда:</b>")
+    lines.append("🟢 < 50°C - оптимальная")
+    lines.append("🟡 50-70°C - повышенная")
+    lines.append("🟠 70-85°C - высокая")
+    lines.append("🔴 > 85°C - критическая")
+    lines.append("")
+    
+    if temp_info.startswith("Ошибка"):
+        lines.append(f"❌ {temp_info}")
+    else:
+        # Разбираем строки с температурой
+        temp_lines = temp_info.strip().split('\n')
+        for line in temp_lines:
+            if ':' in line and '°C' in line:
+                # Добавляем эмодзи и подпись в зависимости от температуры
+                try:
+                    temp_value = float(line.split(':')[1].replace('°C', '').strip())
+                    if temp_value < 50:
+                        emoji = "🟢"  # Нормальная температура
+                        status = "оптимальная"
+                    elif temp_value < 70:
+                        emoji = "🟡"  # Повышенная температура
+                        status = "повышенная"
+                    elif temp_value < 85:
+                        emoji = "🟠"  # Высокая температура
+                        status = "высокая"
+                    else:
+                        emoji = "🔴"  # Критическая температура
+                        status = "критическая"
+                    lines.append(f"{emoji} {line} ({status})")
+                except ValueError:
+                    lines.append(f"📊 {line}")
+            else:
+                lines.append(f"📊 {line}")
+    
+    return '\n'.join(lines) 
