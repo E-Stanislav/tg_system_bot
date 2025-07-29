@@ -160,20 +160,22 @@ def render_temperature_html(temp_info: str) -> str:
     Форматирует информацию о температуре для Telegram
     """
     from datetime import datetime
+    import html
+    
     now = datetime.now().strftime('%H:%M:%S')
     
     lines = [f"<b>🌡 Температура системы</b>\nВремя: <code>{now}</code>"]
     
     # Добавляем легенду
     lines.append("\n<b>Легенда:</b>")
-    lines.append("🟢 < 50°C - оптимальная")
+    lines.append("🟢 &lt; 50°C - оптимальная")
     lines.append("🟡 50-70°C - повышенная")
     lines.append("🟠 70-85°C - высокая")
-    lines.append("🔴 > 85°C - критическая")
+    lines.append("🔴 &gt; 85°C - критическая")
     lines.append("")
     
     if temp_info.startswith("Ошибка"):
-        lines.append(f"❌ {temp_info}")
+        lines.append(f"❌ {html.escape(temp_info)}")
     else:
         # Разбираем строки с температурой
         temp_lines = temp_info.strip().split('\n')
@@ -194,10 +196,12 @@ def render_temperature_html(temp_info: str) -> str:
                     else:
                         emoji = "🔴"  # Критическая температура
                         status = "критическая"
-                    lines.append(f"{emoji} {line} ({status})")
+                    # Экранируем HTML-символы в строке температуры
+                    safe_line = html.escape(line)
+                    lines.append(f"{emoji} {safe_line} ({status})")
                 except ValueError:
-                    lines.append(f"📊 {line}")
+                    lines.append(f"📊 {html.escape(line)}")
             else:
-                lines.append(f"📊 {line}")
+                lines.append(f"📊 {html.escape(line)}")
     
     return '\n'.join(lines) 

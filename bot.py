@@ -347,9 +347,14 @@ async def cmd_dockerctl(message: Message, command: CommandObject, **kwargs):
 @admin_only
 async def cmd_temp(message: Message, command: CommandObject, **kwargs):
     logger.info("/temp from admin")
-    temp_info = get_detailed_temperature_info()
-    text = render_temperature_html(temp_info)
-    await message.answer(text, reply_markup=kb_main_menu())
+    try:
+        temp_info = get_detailed_temperature_info()
+        text = render_temperature_html(temp_info)
+        await message.answer(text, reply_markup=kb_main_menu())
+    except Exception as e:
+        logger.error(f"Error in temp command: {e}")
+        error_text = "❌ Ошибка при получении информации о температуре"
+        await message.answer(error_text, reply_markup=kb_main_menu())
 
 @router.message(Command("outline_audit"))
 @admin_only
@@ -446,12 +451,21 @@ async def cb_show_network(callback: CallbackQuery):
 async def cb_show_temperature(callback: CallbackQuery):
     if not await admin_only_callback(callback):
         return
-    temp_info = get_detailed_temperature_info()
-    text = render_temperature_html(temp_info)
     try:
-        await callback.message.edit_text(text, reply_markup=kb_main_menu())
-    except Exception:
-        await callback.message.answer(text, reply_markup=kb_main_menu())
+        temp_info = get_detailed_temperature_info()
+        text = render_temperature_html(temp_info)
+        try:
+            await callback.message.edit_text(text, reply_markup=kb_main_menu())
+        except Exception as e:
+            logger.warning(f"Failed to edit message, sending new one: {e}")
+            await callback.message.answer(text, reply_markup=kb_main_menu())
+    except Exception as e:
+        logger.error(f"Error in temperature callback: {e}")
+        error_text = "❌ Ошибка при получении информации о температуре"
+        try:
+            await callback.message.answer(error_text, reply_markup=kb_main_menu())
+        except Exception:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data == CBA.CONFIRM_REBOOT.value)
