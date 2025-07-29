@@ -1,8 +1,9 @@
 # Основные зависимости
-aiogram==3.13.1          # Telegram Bot API framework
+aiogram==3.4.1          # Telegram Bot API framework
 psutil==5.9.8            # Системная информация и мониторинг
 python-dotenv==1.0.1     # Загрузка переменных окружения из .env файла
-aiohttp
+aiohttp==3.9.1           # HTTP клиент
+magic-filter==1.0.11     # Фильтры для aiogram
 
 # Опциональные зависимости для расширенного функционала
 # prometheus-client==0.19.0    # Метрики Prometheus (для интеграции)
