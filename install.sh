@@ -22,6 +22,14 @@ if ! command -v pip3 &>/dev/null; then
     exit 1
 fi
 
+# Установка системных зависимостей для компиляции
+print_info "Проверка и установка системных зависимостей..."
+if ! dpkg -l | grep -q python3-dev; then
+    print_info "Установка python3-dev..."
+    sudo apt-get update
+    sudo apt-get install -y gcc python3-dev
+fi
+
 # Проверка и создание виртуального окружения
 if [ ! -d "venv" ]; then
     print_info "Создаю виртуальное окружение..."
@@ -29,7 +37,15 @@ if [ ! -d "venv" ]; then
 fi
 
 # Активация виртуального окружения
+print_info "Активация виртуального окружения..."
 source venv/bin/activate
+
+# Проверка активации виртуального окружения
+if [ -z "$VIRTUAL_ENV" ]; then
+    print_error "Виртуальное окружение не активировано!"
+    exit 1
+fi
+print_success "Виртуальное окружение активировано: $VIRTUAL_ENV"
 
 # Установка outline_audit.sh
 chmod +x outline_audit.sh
@@ -43,6 +59,18 @@ fi
 print_info "Установка зависимостей..."
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Проверка установки ключевых зависимостей
+print_info "Проверка установки зависимостей..."
+if ! python -c "import aiogram" 2>/dev/null; then
+    print_error "aiogram не установлен! Повторная установка..."
+    pip install aiogram==3.4.1
+fi
+
+if ! python -c "import psutil" 2>/dev/null; then
+    print_error "psutil не установлен! Повторная установка..."
+    pip install psutil==5.9.8
+fi
 
 # Проверка и установка pm2
 if ! command -v pm2 &>/dev/null; then
@@ -69,7 +97,7 @@ if pm2 list --name tg_system_bot | grep -q tg_system_bot; then
     pm2 reload tg_system_bot || true
 else
     print_info "Запуск tg_system_bot через pm2..."
-    pm2 start bot.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M
+    pm2 start bot.py --interpreter venv/bin/python3 --name tg_system_bot --max-memory-restart 300M --cwd $(pwd)
 fi
 
 # Сохраняем текущие процессы pm2 для автозапуска после перезагрузки, если есть хотя бы один онлайн-процесс

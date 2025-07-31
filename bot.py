@@ -31,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("linux_admin_bot")
 
+# Global variable to track active live temperature sessions
+active_live_sessions = set()
+
 logger.info("Bot starting up...")
 
 # Import aiogram components
@@ -468,6 +471,56 @@ async def cb_show_temperature(callback: CallbackQuery):
             pass
     await callback.answer()
 
+@router.callback_query(F.data == CBA.SHOW_TEMPERATURE_LIVE.value)
+async def cb_show_temperature_live(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    
+    # Создаем клавиатуру с кнопкой остановки
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    stop_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏹ Остановить", callback_data="STOP_LIVE_TEMP")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=CBA.SHOW_TEMPERATURE_LIVE.value)]
+    ])
+    
+    try:
+        temp_info = get_detailed_temperature_info()
+        text = render_temperature_html(temp_info)
+        text += "\n\n🔄 <b>Live режим активен</b>\nОбновление каждые 2 секунды"
+        
+        # Отправляем новое сообщение с live температурой
+        live_message = await callback.message.answer(text, reply_markup=stop_keyboard)
+        
+        # Запускаем фоновую задачу для обновления
+        asyncio.create_task(update_temperature_live(live_message.chat.id, live_message.message_id, stop_keyboard))
+        
+    except Exception as e:
+        logger.error(f"Error in live temperature callback: {e}")
+        error_text = "❌ Ошибка при получении информации о температуре"
+        await callback.message.answer(error_text, reply_markup=kb_main_menu())
+    
+    await callback.answer()
+
+@router.callback_query(F.data == "STOP_LIVE_TEMP")
+async def cb_stop_live_temperature(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    
+    # Останавливаем live сессию
+    session_key = f"{callback.message.chat.id}:{callback.message.message_id}"
+    active_live_sessions.discard(session_key)
+    
+    try:
+        await callback.message.edit_text(
+            "⏹ Live режим температуры остановлен",
+            reply_markup=kb_main_menu()
+        )
+    except Exception as e:
+        logger.warning(f"Failed to edit message: {e}")
+        await callback.message.answer("⏹ Live режим температуры остановлен", reply_markup=kb_main_menu())
+    
+    await callback.answer()
+
 @router.callback_query(F.data == CBA.CONFIRM_REBOOT.value)
 async def cb_confirm_reboot(callback: CallbackQuery):
     if not await admin_only_callback(callback):
@@ -615,6 +668,47 @@ async def cb_outline_audit(callback: CallbackQuery):
         if json_path:
             with open(json_path, 'rb') as f:
                 await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+
+# ----------------------------------------------------------------------------
+# Live temperature update function
+# ----------------------------------------------------------------------------
+
+async def update_temperature_live(chat_id: int, message_id: int, keyboard):
+    """
+    Обновляет температуру в реальном времени каждые 2 секунды
+    """
+    session_key = f"{chat_id}:{message_id}"
+    active_live_sessions.add(session_key)
+    
+    max_updates = 300  # Максимум 10 минут (300 * 2 секунды)
+    update_count = 0
+    
+    try:
+        while update_count < max_updates and session_key in active_live_sessions:
+            try:
+                # Получаем новую информацию о температуре
+                temp_info = get_detailed_temperature_info()
+                text = render_temperature_html(temp_info)
+                text += f"\n\n🔄 <b>Live режим активен</b>\nОбновление каждые 2 секунды\nОбновлений: {update_count + 1}/{max_updates}"
+                
+                # Обновляем сообщение
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=keyboard
+                )
+                
+                update_count += 1
+                await asyncio.sleep(2)  # Ждем 2 секунды
+                
+            except Exception as e:
+                logger.error(f"Error updating live temperature: {e}")
+                # Если не удалось обновить сообщение, прекращаем цикл
+                break
+    finally:
+        # Удаляем сессию из активных
+        active_live_sessions.discard(session_key)
 
 # ----------------------------------------------------------------------------
 # Bot command list setup
