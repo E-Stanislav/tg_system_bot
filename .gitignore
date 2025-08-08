@@ -1,4 +1,30 @@
-venv/
-.env
-bot.log
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual envs
+venv/
+.venv/
+ENV/
+env/
+
+# Logs
+*.log
+logs/
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Caches
+.pytest_cache/
+.mypy_cache/

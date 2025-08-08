@@ -17,25 +17,30 @@ except Exception:  # pragma: no cover - optional dependency
 # Configuration helpers
 DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Fallback to config.py if present
+# Read env first
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 TEMP_SENSORS_COMMAND = os.getenv("TEMP_SENSORS_COMMAND")  # e.g. "sensors -u" or custom script
 
-# Try to load from config.py if it exists and we're not already loading it
-config_path = Path(__file__).with_name("config.py")
-if config_path.exists() and config_path.resolve() != Path(__file__).resolve():
-    # Import lazily so environment variables still override.
-    import importlib.util
-    _spec = importlib.util.spec_from_file_location("bot_config", str(config_path))
-    if _spec and _spec.loader:  # pragma: no cover - defensive
-        _config = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_config)  # type: ignore
-        BOT_TOKEN = BOT_TOKEN or getattr(_config, "BOT_TOKEN", None)
-        ADMIN_ID = ADMIN_ID or str(getattr(_config, "ADMIN_ID", ""))
-        DEFAULT_LOG_LEVEL = DEFAULT_LOG_LEVEL or getattr(_config, "LOG_LEVEL", "INFO")
-        if not TEMP_SENSORS_COMMAND:
-            TEMP_SENSORS_COMMAND = getattr(_config, "TEMP_SENSORS_COMMAND", None)
+# Fallback to user config.py at project root (one level up from this file's directory)
+try:
+    project_root = Path(__file__).resolve().parents[1]
+    user_config_path = project_root / "config.py"
+    if user_config_path.exists():
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location("user_bot_config", str(user_config_path))
+        if _spec and _spec.loader:  # pragma: no cover - defensive
+            _config = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_config)  # type: ignore
+            BOT_TOKEN = BOT_TOKEN or getattr(_config, "BOT_TOKEN", None)
+            ADMIN_ID = ADMIN_ID or str(getattr(_config, "ADMIN_ID", ""))
+            # Only override default level if not explicitly set via env
+            DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", getattr(_config, "LOG_LEVEL", DEFAULT_LOG_LEVEL)).upper()
+            if not TEMP_SENSORS_COMMAND:
+                TEMP_SENSORS_COMMAND = getattr(_config, "TEMP_SENSORS_COMMAND", None)
+except Exception:
+    # Silent fallback; validation happens below
+    pass
 
 # Validate required config
 if not BOT_TOKEN:

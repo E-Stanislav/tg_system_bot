@@ -12,23 +12,53 @@ print_info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Проверка Python и pip
+# Проверка менеджера пакетов (apt-get)
+if ! command -v apt-get &>/dev/null; then
+    print_error "Поддерживается только системы с apt-get (Debian/Ubuntu)."
+    echo "Установите вручную: python3, python3-pip, python3-venv, npm (или используйте systemd)."
+    exit 1
+fi
+
+APT_UPDATED=0
+ensure_apt_updated() {
+    if [ "$APT_UPDATED" -eq 0 ]; then
+        print_info "Обновление списка пакетов..."
+        sudo apt-get update
+        APT_UPDATED=1
+    fi
+}
+
+ensure_pkg() {
+    local pkg="$1"
+    if ! dpkg -s "$pkg" &>/dev/null; then
+        ensure_apt_updated
+        print_info "Устанавливаю пакет: $pkg"
+        sudo apt-get install -y "$pkg"
+    fi
+}
+
+# Базовые зависимости ОС
+ensure_pkg gcc
+ensure_pkg python3
+ensure_pkg python3-pip
+ensure_pkg python3-venv
+ensure_pkg build-essential
+ensure_pkg curl
+ensure_pkg dnsutils
+
+# Проверка Python и pip (после возможной установки)
 if ! command -v python3 &>/dev/null; then
-    print_error "Python3 не установлен!"
+    print_error "Python3 не найден после установки. Прервусь."
     exit 1
 fi
 if ! command -v pip3 &>/dev/null; then
-    print_error "pip3 не установлен!"
+    print_error "pip3 не найден после установки. Прервусь."
     exit 1
 fi
 
 # Установка системных зависимостей для компиляции
 print_info "Проверка и установка системных зависимостей..."
-if ! dpkg -l | grep -q python3-dev; then
-    print_info "Установка python3-dev..."
-    sudo apt-get update
-    sudo apt-get install -y gcc python3-dev
-fi
+ensure_pkg python3-dev
 
 # Проверка и создание виртуального окружения
 if [ ! -d "venv" ]; then
@@ -76,8 +106,9 @@ fi
 if ! command -v pm2 &>/dev/null; then
     print_info "Установка pm2 (через npm)..."
     if ! command -v npm &>/dev/null; then
-        print_error "npm не установлен! Установите Node.js и npm."
-        exit 1
+        print_info "npm не найден, устанавливаю Node.js и npm..."
+        ensure_pkg nodejs
+        ensure_pkg npm
     fi
     npm install -g pm2
 fi

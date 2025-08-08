@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Telegram Remote Monitoring & Management Bot for Linux Servers",
   "scripts": {
-    "start": "bash run_bot.sh"
+    "start": "./venv/bin/python3 bot.py"
   },
   "author": "",
   "license": "MIT"

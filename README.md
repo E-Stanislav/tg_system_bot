@@ -96,7 +96,7 @@ telegrambot ALL=(root) NOPASSWD:/sbin/reboot,/sbin/shutdown,/usr/bin/apt,/usr/bi
 
 ### 4. Запуск бота
 ```bash
-python3 main.py
+python3 bot.py
 ```
 
 ## 🔧 Конфигурация

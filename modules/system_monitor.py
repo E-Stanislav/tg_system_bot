@@ -138,49 +138,58 @@ def get_cpu_temperature() -> Optional[float]:
 def get_detailed_temperature_info() -> str:
     """
     Получить детальную информацию о температуре всех thermal zones
+    (совместимо с Orange Pi Zero 3). Реализация без внешних утилит.
     """
     try:
-        import subprocess
-        import shlex
-        
-        # Команда для получения детальной информации о температуре
-        cmd = """for zone in /sys/class/thermal/thermal_zone*/temp; do 
-    zone_name=$(basename $(dirname $zone))
-    zone_type=$(cat /sys/class/thermal/$zone_name/type 2>/dev/null || echo "Unknown")
-    temp=$(cat $zone)
-    temp_c=$(echo "scale=1; $temp/1000" | bc -l)
-    
-    # Маппинг типов на понятные названия
-    case "$zone_type" in
-        "cpu-thermal") display_name="CPU" ;;
-        "gpu-thermal") display_name="GPU" ;;
-        "ddr-thermal") display_name="RAM" ;;
-        "soc-thermal") display_name="SoC" ;;
-        "pmic-thermal") display_name="PMIC" ;;
-        *) display_name="$zone_type" ;;
-    esac
-    
-    printf "%s: %.1f°C\\n" "$display_name" "$temp_c"
-done"""
-        
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        else:
-            # Fallback к простому чтению первой thermal zone
-            fallback_cmd = "cat /sys/class/thermal/thermal_zone0/temp"
-            fallback_result = subprocess.run(fallback_cmd, shell=True, capture_output=True, text=True, timeout=5)
-            if fallback_result.returncode == 0:
-                try:
-                    temp_mc = int(fallback_result.stdout.strip())
-                    temp_c = temp_mc / 1000.0
-                    return f"CPU: {temp_c:.1f}°C"
-                except ValueError:
-                    pass
-            
+        from pathlib import Path
+
+        thermal_root = Path("/sys/class/thermal")
+        if not thermal_root.exists():
             return "Не удалось получить информацию о температуре"
-            
+
+        type_to_display = {
+            "cpu-thermal": "CPU",
+            "gpu-thermal": "GPU",
+            "ddr-thermal": "RAM",
+            "soc-thermal": "SoC",
+            "pmic-thermal": "PMIC",
+        }
+
+        lines: list[str] = []
+        for zone_dir in sorted(thermal_root.glob("thermal_zone*")):
+            try:
+                zone_type_path = zone_dir / "type"
+                zone_temp_path = zone_dir / "temp"
+                if not zone_temp_path.exists():
+                    continue
+
+                zone_type_raw = zone_type_path.read_text(errors="ignore").strip() if zone_type_path.exists() else "Unknown"
+                display_name = type_to_display.get(zone_type_raw, zone_type_raw or "Unknown")
+
+                raw_value = zone_temp_path.read_text(errors="ignore").strip()
+                value = float(raw_value) if raw_value else 0.0
+                # Большинство SoC отдают миллиградусы Цельсия
+                temp_c = value / 1000.0 if value > 200 else value
+
+                lines.append(f"{display_name}: {temp_c:.1f}°C")
+            except Exception:
+                continue
+
+        if lines:
+            return "\n".join(lines)
+
+        # Fallback: thermal_zone0
+        fallback_path = thermal_root / "thermal_zone0" / "temp"
+        if fallback_path.exists():
+            try:
+                raw_value = fallback_path.read_text(errors="ignore").strip()
+                value = float(raw_value) if raw_value else 0.0
+                temp_c = value / 1000.0 if value > 200 else value
+                return f"CPU: {temp_c:.1f}°C"
+            except Exception:
+                pass
+
+        return "Не удалось получить информацию о температуре"
     except Exception as e:
         logger.error(f"Ошибка при получении температуры: {e}")
         return f"Ошибка: {e}"
