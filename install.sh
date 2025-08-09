@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+set -o pipefail
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -12,6 +13,13 @@ print_info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Определяем, нужен ли sudo
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # Проверка менеджера пакетов (apt-get)
 if ! command -v apt-get &>/dev/null; then
     print_error "Поддерживается только системы с apt-get (Debian/Ubuntu)."
@@ -20,10 +28,28 @@ if ! command -v apt-get &>/dev/null; then
 fi
 
 APT_UPDATED=0
+
+disable_broken_apt_repos() {
+    print_info "Пытаюсь отключить проблемные репозитории (docker-ce и др.)..."
+    local files_to_check=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
+    for f in "${files_to_check[@]}"; do
+        [ -f "$f" ] || continue
+        if grep -Eqi '(docker(-ce)?|docker-ce|download\.docker\.com|huaweicloud\.com/docker-ce)' "$f"; then
+            $SUDO sed -i 's/^[[:space:]]*deb\(\-src\)\{0,1\}[[:space:]]\+/# &/' "$f"
+            print_info "Отключен репозиторий в: $f"
+        fi
+    done
+}
+
 ensure_apt_updated() {
     if [ "$APT_UPDATED" -eq 0 ]; then
         print_info "Обновление списка пакетов..."
-        sudo apt-get update
+        if ! $SUDO apt-get update; then
+            print_error "apt-get update завершился с ошибкой."
+            disable_broken_apt_repos || true
+            print_info "Повторная попытка обновить список пакетов после отключения проблемных репозиториев..."
+            $SUDO apt-get update
+        fi
         APT_UPDATED=1
     fi
 }
@@ -33,7 +59,7 @@ ensure_pkg() {
     if ! dpkg -s "$pkg" &>/dev/null; then
         ensure_apt_updated
         print_info "Устанавливаю пакет: $pkg"
-        sudo apt-get install -y "$pkg"
+        $SUDO apt-get install -y "$pkg"
     fi
 }
 
@@ -77,8 +103,10 @@ if [ -z "$VIRTUAL_ENV" ]; then
 fi
 print_success "Виртуальное окружение активировано: $VIRTUAL_ENV"
 
-# Установка outline_audit.sh
-chmod +x outline_audit.sh
+# Установка outline_audit.sh (если файл существует)
+if [ -f "outline_audit.sh" ]; then
+    chmod +x outline_audit.sh
+fi
 # Проверка и создание .env файла
 if [ ! -f ".env" ]; then
     print_info "Создаю пустой .env файл..."
