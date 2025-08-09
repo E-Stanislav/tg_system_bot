@@ -11,7 +11,7 @@ import asyncio
 import logging
 import shlex
 import sys
-from typing import Optional
+from typing import Optional, Dict
 import json
 import tempfile
 
@@ -31,8 +31,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("linux_admin_bot")
 
-# Global variable to track active live temperature sessions
-active_live_sessions = set()
+# Live temperature sessions per chat
+# chat_id -> asyncio.Task running updater
+live_temp_sessions: Dict[int, asyncio.Task] = {}
+# chat_id -> message_id of the live message
+live_temp_message_ids: Dict[int, int] = {}
 
 logger.info("Bot starting up...")
 
@@ -476,6 +479,7 @@ async def cb_show_temperature_live(callback: CallbackQuery):
     if not await admin_only_callback(callback):
         return
     
+    chat_id = callback.message.chat.id
     # Создаем клавиатуру с кнопкой остановки
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     stop_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -484,15 +488,39 @@ async def cb_show_temperature_live(callback: CallbackQuery):
     ])
     
     try:
+        # Если сессия уже есть и активна — не создаем новое сообщение, просто обновим существующее
+        existing_task = live_temp_sessions.get(chat_id)
+        if existing_task and not existing_task.done():
+            try:
+                temp_info = get_detailed_temperature_info()
+                text = render_temperature_html(temp_info)
+                text += "\n\n🔄 <b>Live режим уже активен</b>\nОбновление каждые 2 секунды"
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=live_temp_message_ids.get(chat_id),
+                    text=text,
+                    reply_markup=stop_keyboard
+                )
+            except Exception:
+                # Игнорируем ошибки редактирования, например, если сообщение слишком старое
+                pass
+            await callback.answer("Live уже активен", show_alert=False)
+            return
+        # Если сессия была, но уже завершилась — очистим следы
+        if existing_task and existing_task.done():
+            live_temp_sessions.pop(chat_id, None)
+            live_temp_message_ids.pop(chat_id, None)
+
+        # Запускаем новую live-сессию: отправляем сообщение и стартуем обновление
         temp_info = get_detailed_temperature_info()
         text = render_temperature_html(temp_info)
         text += "\n\n🔄 <b>Live режим активен</b>\nОбновление каждые 2 секунды"
-        
-        # Отправляем новое сообщение с live температурой
+
         live_message = await callback.message.answer(text, reply_markup=stop_keyboard)
-        
-        # Запускаем фоновую задачу для обновления
-        asyncio.create_task(update_temperature_live(live_message.chat.id, live_message.message_id, stop_keyboard))
+        live_temp_message_ids[chat_id] = live_message.message_id
+
+        task = asyncio.create_task(update_temperature_live(chat_id, live_message.message_id, stop_keyboard))
+        live_temp_sessions[chat_id] = task
         
     except Exception as e:
         logger.error(f"Error in live temperature callback: {e}")
@@ -506,9 +534,15 @@ async def cb_stop_live_temperature(callback: CallbackQuery):
     if not await admin_only_callback(callback):
         return
     
-    # Останавливаем live сессию
-    session_key = f"{callback.message.chat.id}:{callback.message.message_id}"
-    active_live_sessions.discard(session_key)
+    # Останавливаем live сессию в этом чате
+    chat_id = callback.message.chat.id
+    task = live_temp_sessions.pop(chat_id, None)
+    live_temp_message_ids.pop(chat_id, None)
+    if task and not task.done():
+        try:
+            task.cancel()
+        except Exception:
+            pass
     
     try:
         await callback.message.edit_text(
@@ -677,38 +711,36 @@ async def update_temperature_live(chat_id: int, message_id: int, keyboard):
     """
     Обновляет температуру в реальном времени каждые 2 секунды
     """
-    session_key = f"{chat_id}:{message_id}"
-    active_live_sessions.add(session_key)
-    
-    max_updates = 300  # Максимум 10 минут (300 * 2 секунды)
+    max_updates = 300  # Максимум ~10 минут
     update_count = 0
-    
     try:
-        while update_count < max_updates and session_key in active_live_sessions:
-            try:
-                # Получаем новую информацию о температуре
-                temp_info = get_detailed_temperature_info()
-                text = render_temperature_html(temp_info)
-                text += f"\n\n🔄 <b>Live режим активен</b>\nОбновление каждые 2 секунды\nОбновлений: {update_count + 1}/{max_updates}"
-                
-                # Обновляем сообщение
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    reply_markup=keyboard
-                )
-                
-                update_count += 1
-                await asyncio.sleep(2)  # Ждем 2 секунды
-                
-            except Exception as e:
-                logger.error(f"Error updating live temperature: {e}")
-                # Если не удалось обновить сообщение, прекращаем цикл
-                break
+        while update_count < max_updates:
+            # Получаем новую информацию о температуре
+            temp_info = get_detailed_temperature_info()
+            text = render_temperature_html(temp_info)
+            text += f"\n\n🔄 <b>Live режим активен</b>\nОбновление каждые 2 секунды\nОбновлений: {update_count + 1}/{max_updates}"
+
+            # Обновляем сообщение
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+            update_count += 1
+            await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        # Нормальное завершение по отмене
+        pass
+    except Exception as e:
+        logger.error(f"Error updating live temperature: {e}")
     finally:
-        # Удаляем сессию из активных
-        active_live_sessions.discard(session_key)
+        # Очистка сессии, если она всё ещё указывает на нас
+        cur = live_temp_sessions.get(chat_id)
+        if cur and cur.done():
+            live_temp_sessions.pop(chat_id, None)
+            live_temp_message_ids.pop(chat_id, None)
 
 # ----------------------------------------------------------------------------
 # Bot command list setup
