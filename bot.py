@@ -62,6 +62,7 @@ from modules.system_monitor import (
     get_public_ip_async,
     get_country_by_ip,  # добавляем импорт
     get_detailed_temperature_info,  # добавляем импорт
+    get_local_ip_addresses,
 )
 from modules.formatters import (
     render_status_html, render_processes_html, render_docker_html,
@@ -266,6 +267,13 @@ async def cmd_ip(message: Message, command: CommandObject, **kwargs):
             text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv6: <i>не найден</i>")
+    # Локальные IP
+    local_ips = get_local_ip_addresses(include_ipv6=True)
+    if local_ips:
+        lines = ["<b>Локальные IP (LAN):</b>"]
+        for iface, ips in local_ips.items():
+            lines.append(f"{iface}: <code>{', '.join(ips)}</code>")
+        text.append("\n".join(lines))
     await message.answer("\n\n".join(text), reply_markup=kb_main_menu())
 
 @router.message(Command("service"))
@@ -682,6 +690,13 @@ async def cb_get_ip(callback: CallbackQuery):
             text.append(f"Публичный IPv6: <code>{ipv6}</code>\nСтрана: <i>не определена</i>")
     else:
         text.append("Публичный IPv6: <i>не найден</i>")
+    # Локальные IP
+    local_ips = get_local_ip_addresses(include_ipv6=True)
+    if local_ips:
+        lines = ["<b>Локальные IP (LAN):</b>"]
+        for iface, ips in local_ips.items():
+            lines.append(f"{iface}: <code>{', '.join(ips)}</code>")
+        text.append("\n".join(lines))
     await callback.message.answer("\n\n".join(text), reply_markup=kb_main_menu())
     try:
         await callback.answer()  # Закрыть спиннер

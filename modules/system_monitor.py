@@ -10,6 +10,7 @@ import psutil
 import re
 import shlex
 import socket
+import ipaddress
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -476,3 +477,48 @@ async def get_public_ip_async() -> tuple[Optional[str], Optional[str]]:
                 ipv6 = ip
                 break
     return ipv4, ipv6 
+
+def get_local_ip_addresses(include_ipv6: bool = False) -> Dict[str, List[str]]:
+    """Вернуть локальные IP адреса по интерфейсам.
+
+    - Для IPv4 включаются только приватные адреса (10.0.0.0/8, 172.16/12, 192.168/16)
+    - Для IPv6, если include_ipv6=True, включаются ULA (fc00::/7) и link-local (fe80::/10)
+    - Исключаются заведомо неинтересные интерфейсы: lo, docker*, veth*, br-*
+    """
+    result: Dict[str, List[str]] = {}
+    try:
+        interfaces = psutil.net_if_addrs()
+        for interface_name, addr_list in interfaces.items():
+            if interface_name.startswith(("lo", "docker", "veth", "br-")):
+                continue
+
+            collected: List[str] = []
+            for addr in addr_list:
+                # IPv4
+                if addr.family == socket.AF_INET and addr.address:
+                    ip_text = addr.address
+                    try:
+                        ip_obj = ipaddress.ip_address(ip_text)
+                        # Только приватные адреса локальной сети
+                        if ip_obj.version == 4 and ip_obj.is_private:
+                            collected.append(ip_text)
+                    except ValueError:
+                        continue
+                # IPv6 (опционально)
+                elif include_ipv6 and hasattr(socket, "AF_INET6") and addr.family == socket.AF_INET6 and addr.address:
+                    ip_text6 = addr.address.split("%")[0]
+                    try:
+                        ip6_obj = ipaddress.ip_address(ip_text6)
+                        # ULA считаем локальными, а также link-local для удобства
+                        if ip6_obj.version == 6 and (ip6_obj.is_private or ip6_obj.is_link_local):
+                            collected.append(ip_text6)
+                    except ValueError:
+                        continue
+
+            if collected:
+                # Уберем дубликаты и отсортируем для стабильности вывода
+                uniq_sorted = sorted(set(collected), key=lambda x: (":" in x, x))
+                result[interface_name] = uniq_sorted
+    except Exception as e:
+        logger.warning(f"Ошибка получения локальных IP: {e}")
+    return result
