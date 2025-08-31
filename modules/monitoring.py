@@ -48,6 +48,8 @@ async def background_monitoring(bot: Bot):
                     msg = f"⚠️ Высокая загрузка CPU: <b>{status.cpu.percent:.1f}%</b>"
                     if proc_lines:
                         msg += "\n\nТоп процессов по CPU:\n" + "\n".join(proc_lines)
+                    else:
+                        msg += "\n\nНет активных процессов с высокой загрузкой CPU."
                     await bot.send_message(
                         ADMIN_ID_INT,
                         msg
