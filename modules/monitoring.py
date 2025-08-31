@@ -39,23 +39,19 @@ async def background_monitoring(bot: Bot):
             # CPU alerts
             if status.cpu.percent > ALERT_CPU_THRESHOLD:
                 if not last_alerts["cpu"]:
-                    await bot.send_message(
-                        ADMIN_ID_INT, 
-                        f"⚠️ Высокая загрузка CPU: <b>{status.cpu.percent:.1f}%</b>"
-                    )
                     # Получить топ-5 процессов по CPU
                     top_processes = get_top_processes(limit=5)
-                    if top_processes:
-                        proc_lines = [
-                            f"<b>{p.name}</b> (PID: {p.pid}) — {p.cpu_percent:.1f}% CPU"
-                            for p in top_processes if p.cpu_percent > 0.1
-                        ]
-                        if proc_lines:
-                            msg = "\n".join(proc_lines)
-                            await bot.send_message(
-                                ADMIN_ID_INT,
-                                f"Топ процессов по CPU:\n{msg}"
-                            )
+                    proc_lines = [
+                        f"<b>{p.name}</b> (PID: {p.pid}) — {p.cpu_percent:.1f}% CPU"
+                        for p in top_processes if p.cpu_percent > 0.1
+                    ] if top_processes else []
+                    msg = f"⚠️ Высокая загрузка CPU: <b>{status.cpu.percent:.1f}%</b>"
+                    if proc_lines:
+                        msg += "\n\nТоп процессов по CPU:\n" + "\n".join(proc_lines)
+                    await bot.send_message(
+                        ADMIN_ID_INT,
+                        msg
+                    )
                     last_alerts["cpu"] = True
             else:
                 last_alerts["cpu"] = False
