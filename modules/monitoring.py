@@ -7,6 +7,7 @@ import asyncio
 import logging
 import shlex
 from typing import Set
+from datetime import datetime
 
 from aiogram import Bot
 
@@ -165,7 +166,8 @@ async def background_temperature_alerts(bot: Bot):
                                 ADMIN_ID_INT,
                                 (
                                     f"🔥 Перегрев компонента <b>{component_name}</b>: "
-                                    f"<b>{temp_c:.1f}°C</b> (порог {ALERT_TEMP_THRESHOLD:.1f}°C)"
+                                    f"<b>{temp_c:.1f}°C</b> (порог {ALERT_TEMP_THRESHOLD:.1f}°C)\n"
+                                    f"Время: <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
                                 ),
                             )
                             logger.info(
@@ -184,7 +186,8 @@ async def background_temperature_alerts(bot: Bot):
                                 ADMIN_ID_INT,
                                 (
                                     f"✅ Температура <b>{component_name}</b> вернулась в норму: "
-                                    f"<b>{temp_c:.1f}°C</b>"
+                                    f"<b>{temp_c:.1f}°C</b>\n"
+                                    f"Время: <code>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</code>"
                                 ),
                             )
                             logger.info(
