@@ -461,6 +461,46 @@ async def cb_show_network(callback: CallbackQuery):
         await callback.message.answer(text, reply_markup=kb_main_menu())
     await callback.answer()
 
+# Double-confirmation ask steps
+@router.callback_query(F.data == CBA.ASK_REBOOT.value)
+async def cb_ask_reboot(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    try:
+        await callback.message.answer(
+            "Подтвердите перезагрузку сервера.",
+            reply_markup=kb_confirm("reboot", CBA.CONFIRM_REBOOT.value)
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == CBA.ASK_SHUTDOWN.value)
+async def cb_ask_shutdown(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    try:
+        await callback.message.answer(
+            "Подтвердите завершение работы сервера.",
+            reply_markup=kb_confirm("shutdown", CBA.CONFIRM_SHUTDOWN.value)
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == CBA.ASK_UPDATE.value)
+async def cb_ask_update(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+    try:
+        await callback.message.answer(
+            "Подтвердите обновление пакетов (apt-get update && upgrade).",
+            reply_markup=kb_confirm("update", CBA.CONFIRM_UPDATE.value)
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
 @router.callback_query(F.data == CBA.SHOW_TEMPERATURE.value)
 async def cb_show_temperature(callback: CallbackQuery):
     if not await admin_only_callback(callback):
@@ -717,6 +757,25 @@ async def cb_outline_audit(callback: CallbackQuery):
         if json_path:
             with open(json_path, 'rb') as f:
                 await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+
+# Generic cancel handler for confirmation dialogs
+@router.callback_query(F.data == "IGNORE")
+async def cb_ignore(callback: CallbackQuery):
+    if not await admin_only_callback(callback, silent=True):
+        return
+    # Close spinner
+    try:
+        await callback.answer("Отменено", show_alert=False)
+    except Exception:
+        pass
+    # Replace confirmation with cancelled notice
+    try:
+        await callback.message.edit_text("❎ Действие отменено.", reply_markup=kb_main_menu())
+    except Exception:
+        try:
+            await callback.message.answer("❎ Действие отменено.", reply_markup=kb_main_menu())
+        except Exception:
+            pass
 
 # ----------------------------------------------------------------------------
 # Live temperature update function

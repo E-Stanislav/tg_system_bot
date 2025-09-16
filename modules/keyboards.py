@@ -11,6 +11,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ----------------------------------------------------------------------------
 
 class CBA(str, Enum):
+    ASK_REBOOT = "ARB"
+    ASK_SHUTDOWN = "ASD"
+    ASK_UPDATE = "AUP"
     CONFIRM_REBOOT = "CRB"
     CONFIRM_SHUTDOWN = "CSD"
     CONFIRM_UPDATE = "CUP"
@@ -47,9 +50,9 @@ def kb_main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🌡 Температура", callback_data=CBA.SHOW_TEMPERATURE.value),
          InlineKeyboardButton(text="🌡 Live", callback_data=CBA.SHOW_TEMPERATURE_LIVE.value)],
         # [InlineKeyboardButton(text="🛡 Outline Audit", callback_data=CBA.OUTLINE_AUDIT.value)],
-        [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.CONFIRM_REBOOT.value),
-         InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.CONFIRM_SHUTDOWN.value)],
-        [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.CONFIRM_UPDATE.value)],
+        [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.ASK_REBOOT.value),
+         InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.ASK_SHUTDOWN.value)],
+        [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.ASK_UPDATE.value)],
         [InlineKeyboardButton(text="🌐 IP", callback_data="GET_IP")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
