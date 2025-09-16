@@ -168,6 +168,10 @@ async def background_temperature_alerts(bot: Bot):
                                     f"<b>{temp_c:.1f}°C</b> (порог {ALERT_TEMP_THRESHOLD:.1f}°C)"
                                 ),
                             )
+                            logger.info(
+                                "Температурный алерт: %s=%.1f°C (порог=%.1f°C)",
+                                component_name, temp_c, ALERT_TEMP_THRESHOLD,
+                            )
                         except Exception as e:
                             logger.warning("Не удалось отправить алерт о температуре: %s", e)
                         overheated_now.add(component_name)
@@ -182,6 +186,10 @@ async def background_temperature_alerts(bot: Bot):
                                     f"✅ Температура <b>{component_name}</b> вернулась в норму: "
                                     f"<b>{temp_c:.1f}°C</b>"
                                 ),
+                            )
+                            logger.info(
+                                "Температура нормализована: %s=%.1f°C (порог=%.1f°C, гистерезис=%.1f°C)",
+                                component_name, temp_c, ALERT_TEMP_THRESHOLD, TEMP_ALERT_HYSTERESIS,
                             )
                         except Exception as e:
                             logger.warning("Не удалось отправить сообщение о нормализации температуры: %s", e)
