@@ -69,7 +69,7 @@ from modules.formatters import (
     render_network_html, render_services_html, render_help_html,
     render_command_result_html, render_temperature_html
 )
-from modules.monitoring import background_monitoring, scheduled_status
+from modules.monitoring import background_monitoring, scheduled_status, background_temperature_alerts
 
 async def run_outline_audit():
     """
@@ -796,6 +796,7 @@ async def main() -> None:
     # Start background monitoring and scheduler
     asyncio.create_task(background_monitoring(bot))
     asyncio.create_task(scheduled_status(bot))
+    asyncio.create_task(background_temperature_alerts(bot))
     
     # Start polling
     logger.info("Starting polling...")

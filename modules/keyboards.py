@@ -46,7 +46,7 @@ def kb_main_menu() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🌐 Сеть", callback_data=CBA.SHOW_NETWORK.value)],
         [InlineKeyboardButton(text="🌡 Температура", callback_data=CBA.SHOW_TEMPERATURE.value),
          InlineKeyboardButton(text="🌡 Live", callback_data=CBA.SHOW_TEMPERATURE_LIVE.value)],
-        [InlineKeyboardButton(text="🛡 Outline Audit", callback_data=CBA.OUTLINE_AUDIT.value)],
+        # [InlineKeyboardButton(text="🛡 Outline Audit", callback_data=CBA.OUTLINE_AUDIT.value)],
         [InlineKeyboardButton(text="🔄 Reboot", callback_data=CBA.CONFIRM_REBOOT.value),
          InlineKeyboardButton(text="⏹ Shutdown", callback_data=CBA.CONFIRM_SHUTDOWN.value)],
         [InlineKeyboardButton(text="⬆ Update", callback_data=CBA.CONFIRM_UPDATE.value)],

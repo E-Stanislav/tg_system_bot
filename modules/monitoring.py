@@ -13,11 +13,15 @@ from aiogram import Bot
 from core.config import (
     ADMIN_ID_INT, ALERT_CPU_THRESHOLD, ALERT_RAM_THRESHOLD, 
     ALERT_DISK_THRESHOLD, ALERT_SERVICES, ALERT_DOCKER_CONTAINERS,
-    STATUS_SCHEDULE_SECONDS
+    STATUS_SCHEDULE_SECONDS,
+    ALERT_TEMP_THRESHOLD,
+    TEMP_MONITOR_INTERVAL_SECONDS,
+    TEMP_ALERT_HYSTERESIS,
 )
 from modules.system_monitor import (
     gather_system_status, get_top_processes, get_docker_info,
-    run_command
+    run_command,
+    get_thermal_zone_temperatures,
 )
 from modules.formatters import fmt_bytes, render_status_html
 from modules.keyboards import kb_main_menu
@@ -126,6 +130,66 @@ async def background_monitoring(bot: Bot):
             logger.warning(f"Ошибка в background_monitoring: {e}")
         
         await asyncio.sleep(60)  # Проверять каждую минуту
+
+# ----------------------------------------------------------------------------
+# Background temperature overheat alerts
+# ----------------------------------------------------------------------------
+
+async def background_temperature_alerts(bot: Bot):
+    """Проверяет температуры по компонентам и шлет алерты при перегреве.
+
+    - Порог: ALERT_TEMP_THRESHOLD (°C)
+    - Интервал: TEMP_MONITOR_INTERVAL_SECONDS
+    - Гистерезис: TEMP_ALERT_HYSTERESIS — чтобы не спамить при колебаниях
+    """
+    logger.info(
+        "Запуск температурного мониторинга: порог=%.1f°C, интервал=%ss, гистерезис=%.1f°C",
+        ALERT_TEMP_THRESHOLD, TEMP_MONITOR_INTERVAL_SECONDS, TEMP_ALERT_HYSTERESIS,
+    )
+
+    overheated_now: Set[str] = set()  # компоненты, по которым уже отправлен алерт
+
+    while True:
+        try:
+            temps = get_thermal_zone_temperatures()
+            if not temps:
+                # Нечего мониторить на этой системе — спим дольше
+                await asyncio.sleep(TEMP_MONITOR_INTERVAL_SECONDS)
+                continue
+
+            for component_name, temp_c in temps.items():
+                if temp_c >= ALERT_TEMP_THRESHOLD:
+                    if component_name not in overheated_now:
+                        try:
+                            await bot.send_message(
+                                ADMIN_ID_INT,
+                                (
+                                    f"🔥 Перегрев компонента <b>{component_name}</b>: "
+                                    f"<b>{temp_c:.1f}°C</b> (порог {ALERT_TEMP_THRESHOLD:.1f}°C)"
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning("Не удалось отправить алерт о температуре: %s", e)
+                        overheated_now.add(component_name)
+                else:
+                    # Сброс алерта, когда температура опустится ниже порога - гистерезис
+                    if component_name in overheated_now and temp_c <= ALERT_TEMP_THRESHOLD - TEMP_ALERT_HYSTERESIS:
+                        overheated_now.discard(component_name)
+                        try:
+                            await bot.send_message(
+                                ADMIN_ID_INT,
+                                (
+                                    f"✅ Температура <b>{component_name}</b> вернулась в норму: "
+                                    f"<b>{temp_c:.1f}°C</b>"
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning("Не удалось отправить сообщение о нормализации температуры: %s", e)
+
+        except Exception as e:
+            logger.warning(f"Ошибка в background_temperature_alerts: {e}")
+
+        await asyncio.sleep(TEMP_MONITOR_INTERVAL_SECONDS)
 
 # ----------------------------------------------------------------------------
 # Scheduled status reports

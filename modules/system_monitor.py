@@ -195,6 +195,50 @@ def get_detailed_temperature_info() -> str:
         logger.error(f"Ошибка при получении температуры: {e}")
         return f"Ошибка: {e}"
 
+def get_thermal_zone_temperatures() -> Dict[str, float]:
+    """
+    Вернуть словарь {"CPU": 55.2, "GPU": 62.1, ...} на основе /sys/class/thermal.
+
+    Ключи используются человекочитаемые, как в get_detailed_temperature_info.
+    Если температур нет, возвращает пустой словарь.
+    """
+    from pathlib import Path
+    temps: Dict[str, float] = {}
+    try:
+        thermal_root = Path("/sys/class/thermal")
+        if not thermal_root.exists():
+            return temps
+
+        type_to_display = {
+            "cpu-thermal": "CPU",
+            "gpu-thermal": "GPU",
+            "ddr-thermal": "RAM",
+            "soc-thermal": "SoC",
+            "pmic-thermal": "PMIC",
+        }
+
+        for zone_dir in sorted(thermal_root.glob("thermal_zone*")):
+            try:
+                zone_type_path = zone_dir / "type"
+                zone_temp_path = zone_dir / "temp"
+                if not zone_temp_path.exists():
+                    continue
+
+                zone_type_raw = zone_type_path.read_text(errors="ignore").strip() if zone_type_path.exists() else "Unknown"
+                display_name = type_to_display.get(zone_type_raw, zone_type_raw or "Unknown")
+
+                raw_value = zone_temp_path.read_text(errors="ignore").strip()
+                value = float(raw_value) if raw_value else 0.0
+                temp_c = value / 1000.0 if value > 200 else value
+
+                # Последняя запись побеждает при дубликатах имён
+                temps[display_name] = temp_c
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug(f"Ошибка чтения thermal zones: {e}")
+    return temps
+
 def get_temperature_status(temp_value: float) -> tuple[str, str]:
     """
     Возвращает эмодзи и статус для температуры
