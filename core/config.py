@@ -64,13 +64,13 @@ LOG_FILE = os.getenv("BOT_LOG_FILE", "bot.log")
 ALERT_CPU_THRESHOLD = 90.0  # %
 ALERT_RAM_THRESHOLD = 90.0  # %
 ALERT_DISK_THRESHOLD = 10.0  # % свободного места
-ALERT_SERVICES = ["nginx", "postgresql", "mysql", "docker"]  # важные сервисы
-ALERT_DOCKER_CONTAINERS = ["nginx", "postgres", "mysql", "redis"]  # важные контейнеры
+ALERT_SERVICES = ["docker"]  # важные сервисы
+ALERT_DOCKER_CONTAINERS = []  # важные контейнеры
 STATUS_SCHEDULE_SECONDS = 24 * 60 * 60  # раз в сутки 
 
 # Temperature alert settings
 # Порог критической температуры (°C), при превышении шлем уведомление
-ALERT_TEMP_THRESHOLD = float(os.getenv("ALERT_TEMP_THRESHOLD", "50.0"))
+ALERT_TEMP_THRESHOLD = float(os.getenv("ALERT_TEMP_THRESHOLD", "60.0"))
 # Интервал проверки температуры в секундах
 TEMP_MONITOR_INTERVAL_SECONDS = int(os.getenv("TEMP_MONITOR_INTERVAL_SECONDS", "10"))
 # Гистерезис (°C) для сброса состояния перегрева, чтобы избежать флаппинга

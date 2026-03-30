@@ -14,6 +14,7 @@ import ipaddress
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 import aiohttp
@@ -49,6 +50,19 @@ class DiskUsage:
     percent: float
 
 @dataclass
+class HardwareInfo:
+    device_model: Optional[str]
+    cpu_model: str
+    architecture: str
+    physical_cores: Optional[int]
+    logical_cores: Optional[int]
+    cpu_freq_current_mhz: Optional[float]
+    cpu_freq_max_mhz: Optional[float]
+    gpu_name: Optional[str]
+    gpu_memory_total: Optional[int]
+    extra_temperatures_c: Dict[str, float]
+
+@dataclass
 class SystemStatus:
     cpu: CpuLoad
     memory: MemoryUsage
@@ -59,6 +73,7 @@ class SystemStatus:
     logged_in_users: List[str]
     os_name: str
     kernel: str
+    hardware: HardwareInfo
 
 @dataclass
 class NetworkInfo:
@@ -105,6 +120,9 @@ def get_disk_usage(all_partitions: bool = False) -> List[DiskUsage]:
         # Skip pseudo FSs sometimes not accessible
         if part.fstype == '' or part.device.startswith('tmpfs') or part.device.startswith('devtmpfs'):
             continue
+        # Snap mounts are read-only loop/squashfs volumes and add noise to the status output.
+        if part.mountpoint.startswith('/snap/') or part.fstype == 'squashfs':
+            continue
         try:
             usage = psutil.disk_usage(part.mountpoint)
         except PermissionError:  # pragma: no cover - depends on host
@@ -115,6 +133,130 @@ def get_disk_usage(all_partitions: bool = False) -> List[DiskUsage]:
 def get_uptime() -> timedelta:
     boot_ts = psutil.boot_time()
     return datetime.utcnow() - datetime.utcfromtimestamp(boot_ts)
+
+def _read_text_file(path: Path) -> Optional[str]:
+    try:
+        text = path.read_text(errors="ignore")
+    except Exception:
+        return None
+    cleaned = text.replace("\x00", " ").strip()
+    return cleaned or None
+
+def _read_int_file(path: Path) -> Optional[int]:
+    raw = _read_text_file(path)
+    if raw is None:
+        return None
+    try:
+        return int(raw.split()[0], 10)
+    except ValueError:
+        return None
+
+def get_device_model() -> Optional[str]:
+    device_tree_model = _read_text_file(Path("/proc/device-tree/model"))
+    if device_tree_model:
+        return device_tree_model
+
+    product_name = _read_text_file(Path("/sys/devices/virtual/dmi/id/product_name"))
+    sys_vendor = _read_text_file(Path("/sys/devices/virtual/dmi/id/sys_vendor"))
+    if product_name and sys_vendor and sys_vendor.lower() not in product_name.lower():
+        return f"{sys_vendor} {product_name}"
+    return product_name or sys_vendor
+
+def get_cpu_model() -> str:
+    cpuinfo_path = Path("/proc/cpuinfo")
+    text = _read_text_file(cpuinfo_path)
+    if text:
+        for key in ("model name", "Hardware", "Processor", "cpu model"):
+            match = re.search(rf"^{re.escape(key)}\s*:\s*(.+)$", text, re.MULTILINE)
+            if match:
+                value = match.group(1).strip()
+                if value:
+                    return value
+
+    processor = platform.processor().strip()
+    if processor:
+        return processor
+    return platform.machine()
+
+def _normalize_gpu_name(raw_name: str) -> str:
+    lowered = raw_name.lower()
+    if "mali" in lowered:
+        return "ARM Mali GPU"
+    if "adreno" in lowered:
+        return "Qualcomm Adreno GPU"
+    if "powervr" in lowered:
+        return "PowerVR GPU"
+    if "nvidia" in lowered:
+        return "NVIDIA GPU"
+    if "radeon" in lowered or "amdgpu" in lowered:
+        return "AMD GPU"
+    if "intel" in lowered or "i915" in lowered or "xe" in lowered:
+        return "Intel GPU"
+    return raw_name
+
+def get_gpu_info() -> Tuple[Optional[str], Optional[int]]:
+    drm_root = Path("/sys/class/drm")
+    if not drm_root.exists():
+        return None, None
+
+    for card_path in sorted(drm_root.glob("card[0-9]*")):
+        device_dir = card_path / "device"
+        if not device_dir.exists():
+            continue
+
+        gpu_name: Optional[str] = None
+
+        compatible = _read_text_file(device_dir / "of_node" / "compatible")
+        if compatible:
+            tokens = [token for token in compatible.split() if token]
+            if tokens:
+                gpu_name = _normalize_gpu_name(tokens[0].replace(",", " "))
+
+        if gpu_name is None:
+            driver_link = device_dir / "driver"
+            if driver_link.exists():
+                try:
+                    gpu_name = _normalize_gpu_name(driver_link.resolve().name)
+                except Exception:
+                    gpu_name = None
+
+        if gpu_name is None:
+            uevent_text = _read_text_file(device_dir / "uevent")
+            if uevent_text:
+                match = re.search(r"^DRIVER=(.+)$", uevent_text, re.MULTILINE)
+                if match:
+                    gpu_name = _normalize_gpu_name(match.group(1).strip())
+
+        gpu_memory_total = _read_int_file(device_dir / "mem_info_vram_total")
+        if gpu_name or gpu_memory_total is not None:
+            return gpu_name, gpu_memory_total
+
+    return None, None
+
+def get_hardware_info() -> HardwareInfo:
+    cpu_freq = None
+    try:
+        cpu_freq = psutil.cpu_freq()
+    except Exception:
+        cpu_freq = None
+
+    extra_temperatures = get_thermal_zone_temperatures()
+    if "CPU" in extra_temperatures:
+        extra_temperatures = {k: v for k, v in extra_temperatures.items() if k != "CPU"}
+
+    gpu_name, gpu_memory_total = get_gpu_info()
+    return HardwareInfo(
+        device_model=get_device_model(),
+        cpu_model=get_cpu_model(),
+        architecture=platform.machine(),
+        physical_cores=psutil.cpu_count(logical=False),
+        logical_cores=psutil.cpu_count(logical=True),
+        cpu_freq_current_mhz=cpu_freq.current if cpu_freq else None,
+        cpu_freq_max_mhz=cpu_freq.max if cpu_freq and cpu_freq.max and cpu_freq.max > 0 else None,
+        gpu_name=gpu_name,
+        gpu_memory_total=gpu_memory_total,
+        extra_temperatures_c=extra_temperatures,
+    )
 
 def get_cpu_temperature() -> Optional[float]:
     # Try psutil first
@@ -142,8 +284,6 @@ def get_detailed_temperature_info() -> str:
     (совместимо с Orange Pi Zero 3). Реализация без внешних утилит.
     """
     try:
-        from pathlib import Path
-
         thermal_root = Path("/sys/class/thermal")
         if not thermal_root.exists():
             return "Не удалось получить информацию о температуре"
@@ -202,7 +342,6 @@ def get_thermal_zone_temperatures() -> Dict[str, float]:
     Ключи используются человекочитаемые, как в get_detailed_temperature_info.
     Если температур нет, возвращает пустой словарь.
     """
-    from pathlib import Path
     temps: Dict[str, float] = {}
     try:
         thermal_root = Path("/sys/class/thermal")
@@ -432,8 +571,10 @@ def gather_system_status() -> SystemStatus:
     temp = get_cpu_temperature()
     users = get_logged_in_users()
     os_name, kernel = get_os_info()
+    hardware = get_hardware_info()
     return SystemStatus(cpu=cpu, memory=mem, swap=swap, disks=disks, uptime=uptime,
-                        cpu_temp_c=temp, logged_in_users=users, os_name=os_name, kernel=kernel)
+                        cpu_temp_c=temp, logged_in_users=users, os_name=os_name, kernel=kernel,
+                        hardware=hardware)
 
 # ----------------------------------------------------------------------------
 # Command execution helpers

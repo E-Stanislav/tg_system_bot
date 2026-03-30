@@ -62,6 +62,32 @@ def render_status_html(status: SystemStatus) -> str:
             lines.append(f"{d.mount}: <code>{fmt_bytes(d.used)}/{fmt_bytes(d.total)} ({d.percent:.1f}%)</code>")
     # os
     lines.append("\n<b>Система:</b>")
+    if status.hardware.device_model:
+        lines.append(f"Device: <code>{status.hardware.device_model}</code>")
+    lines.append(f"CPU Model: <code>{status.hardware.cpu_model}</code>")
+    if status.hardware.physical_cores and status.hardware.logical_cores:
+        lines.append(
+            f"Cores/Threads: <code>{status.hardware.physical_cores}/{status.hardware.logical_cores}</code>"
+        )
+    elif status.hardware.logical_cores:
+        lines.append(f"Threads: <code>{status.hardware.logical_cores}</code>")
+    lines.append(f"Arch: <code>{status.hardware.architecture}</code>")
+    if status.hardware.cpu_freq_current_mhz is not None:
+        freq = f"{status.hardware.cpu_freq_current_mhz / 1000.0:.2f} GHz"
+        if status.hardware.cpu_freq_max_mhz is not None:
+            freq += f" / max {status.hardware.cpu_freq_max_mhz / 1000.0:.2f} GHz"
+        lines.append(f"CPU Freq: <code>{freq}</code>")
+    if status.hardware.gpu_name:
+        lines.append(f"GPU: <code>{status.hardware.gpu_name}</code>")
+        if status.hardware.gpu_memory_total is not None:
+            lines.append(f"GPU Memory: <code>{fmt_bytes(status.hardware.gpu_memory_total)}</code>")
+        else:
+            lines.append("GPU Memory: <i>shared / unavailable</i>")
+    if status.hardware.extra_temperatures_c:
+        temps = ", ".join(
+            f"{name}: {value:.1f}°C" for name, value in status.hardware.extra_temperatures_c.items()
+        )
+        lines.append(f"Extra Temps: <code>{temps}</code>")
     lines.append(f"OS: <code>{status.os_name}</code>")
     lines.append(f"Kernel: <code>{status.kernel}</code>")
     return '\n'.join(lines)

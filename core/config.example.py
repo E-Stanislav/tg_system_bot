@@ -41,22 +41,22 @@ ALERT_TEMP_THRESHOLD = 70.0     # Температура CPU в °C
 
 # Важные сервисы для мониторинга
 ALERT_SERVICES = [
-    "nginx",
-    "postgresql", 
-    "mysql",
+    # "nginx",
+    # "postgresql", 
+    # "mysql",
     "docker",
-    "redis-server",
-    "apache2"
+    # "redis-server",
+    # "apache2"
 ]
 
 # Важные Docker контейнеры для мониторинга
 ALERT_DOCKER_CONTAINERS = [
-    "nginx",
-    "postgres",
-    "mysql", 
-    "redis",
-    "app",
-    "database"
+    # "nginx",
+    # "postgres",
+    # "mysql", 
+    # "redis",
+    # "app",
+    # "database"
 ]
 
 # Настройки уведомлений
