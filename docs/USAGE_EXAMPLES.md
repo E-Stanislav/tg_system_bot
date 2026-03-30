@@ -172,6 +172,25 @@ redis-server.service   loaded active running Advanced key-value store
 2024/01/15 14:30:25 [notice] 1#1: start worker process 1235
 ```
 
+#### Интерактивная shell-сессия
+```
+/shell
+```
+**Пример использования:**
+```
+pwd
+cd /opt
+ls -la
+tail -f /var/log/syslog
+```
+
+**Завершение сессии:**
+```
+/shell_exit
+```
+
+> Для включения режима нужно задать `ENABLE_SHELL=true` в `.env` или `config.py`.
+
 ### Системные операции
 
 #### Перезагрузка сервера

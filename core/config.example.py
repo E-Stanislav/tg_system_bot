@@ -8,6 +8,10 @@ ADMIN_ID = 123456789  # Ваш Telegram ID (можно узнать у @userinfo
 # Настройки логирования
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
+# Разрешить интерактивную shell-сессию через Telegram.
+# Включайте только если понимаете риски: это даёт администратору доступ к bash на сервере.
+ENABLE_SHELL = False
+
 # Настройки мониторинга температуры CPU
 # Для Orange Pi Zero 3 используйте эту команду:
 TEMP_SENSORS_COMMAND = """for zone in /sys/class/thermal/thermal_zone*/temp; do 

@@ -21,6 +21,7 @@ DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 TEMP_SENSORS_COMMAND = os.getenv("TEMP_SENSORS_COMMAND")  # e.g. "sensors -u" or custom script
+ENABLE_SHELL = os.getenv("ENABLE_SHELL")
 
 # Fallback to user config.py at project root (one level up from this file's directory)
 try:
@@ -38,6 +39,8 @@ try:
             DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", getattr(_config, "LOG_LEVEL", DEFAULT_LOG_LEVEL)).upper()
             if not TEMP_SENSORS_COMMAND:
                 TEMP_SENSORS_COMMAND = getattr(_config, "TEMP_SENSORS_COMMAND", None)
+            if ENABLE_SHELL is None:
+                ENABLE_SHELL = getattr(_config, "ENABLE_SHELL", None)
 except Exception:
     # Silent fallback; validation happens below
     pass
@@ -59,6 +62,9 @@ if ADMIN_ID_INT is None:
 
 # Logging configuration
 LOG_FILE = os.getenv("BOT_LOG_FILE", "bot.log")
+ENABLE_SHELL = str(ENABLE_SHELL if ENABLE_SHELL is not None else "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 # Alert thresholds
 ALERT_CPU_THRESHOLD = 90.0  # %

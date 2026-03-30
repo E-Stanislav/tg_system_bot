@@ -169,6 +169,9 @@ def render_help_html() -> str:
         /ip - Публичный IP сервера
         /service &lt;action&gt; &lt;name&gt; - Управление сервисом (start|stop|restart). Пример: /service restart nginx
         /dockerctl &lt;action&gt; &lt;container&gt; - Управление Docker (start|stop|restart|logs). Пример: /dockerctl restart nginx
+        /shell - Открыть интерактивную bash-сессию
+        /shell &lt;cmd&gt; - Открыть shell и сразу выполнить команду
+        /shell_exit - Завершить shell-сессию
         """
     ).strip()
 

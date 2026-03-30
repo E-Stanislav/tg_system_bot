@@ -25,6 +25,8 @@ class CBA(str, Enum):
     SHOW_TEMPERATURE = "TEMP"
     SHOW_TEMPERATURE_LIVE = "TEMP_LIVE"
     OUTLINE_AUDIT = "OUTLINE_AUDIT"
+    SHELL_CTRL_C = "SHELL_CTRL_C"
+    SHELL_STOP = "SHELL_STOP"
 
 # Dynamic service actions prefixed at runtime
 CB_PREFIX_RESTART = "RSVC:"  # + service
@@ -75,4 +77,10 @@ def kb_docker_action(container_name: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔁 restart", callback_data=CB_PREFIX_DOCKER_RESTART + container_name)],
         [InlineKeyboardButton(text="▶ start", callback_data=CB_PREFIX_DOCKER_START + container_name),
          InlineKeyboardButton(text="⏸ stop", callback_data=CB_PREFIX_DOCKER_STOP + container_name)],
-    ]) 
+    ])
+
+def kb_shell_session() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Ctrl+C", callback_data=CBA.SHELL_CTRL_C.value),
+         InlineKeyboardButton(text="⏹ Завершить", callback_data=CBA.SHELL_STOP.value)],
+    ])

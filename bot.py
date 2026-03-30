@@ -8,8 +8,15 @@ Uses modular architecture with separate modules for different functionalities.
 """
 
 import asyncio
+import contextlib
+from dataclasses import dataclass, field
+import html
 import logging
+import os
+import pty
+import re
 import shlex
+import signal
 import sys
 from typing import Optional, Dict
 import json
@@ -17,7 +24,7 @@ import tempfile
 
 # Import configuration first
 from core.config import (
-    BOT_TOKEN, ADMIN_ID_INT, DEFAULT_LOG_LEVEL, LOG_FILE
+    BOT_TOKEN, ADMIN_ID_INT, DEFAULT_LOG_LEVEL, LOG_FILE, ENABLE_SHELL
 )
 
 # Setup logging
@@ -31,11 +38,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("linux_admin_bot")
 
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+SHELL_RENDER_LIMIT = 3200
+SHELL_BUFFER_LIMIT = 20000
+KNOWN_BOT_COMMANDS = {
+    "start", "help", "status", "services", "restart", "shutdown",
+    "update", "ip", "service", "processes", "docker", "network",
+    "dockerctl", "temp", "outline_audit", "shell", "shell_exit",
+}
+
 # Live temperature sessions per chat
 # chat_id -> asyncio.Task running updater
 live_temp_sessions: Dict[int, asyncio.Task] = {}
 # chat_id -> message_id of the live message
 live_temp_message_ids: Dict[int, int] = {}
+
+@dataclass
+class ShellSession:
+    process: asyncio.subprocess.Process
+    master_fd: int
+    status_message_id: int
+    dirty: asyncio.Event = field(default_factory=asyncio.Event)
+    output: str = ""
+    active: bool = True
+    last_rendered_text: str = ""
+    reader_task: Optional[asyncio.Task] = None
+    flusher_task: Optional[asyncio.Task] = None
 
 logger.info("Bot starting up...")
 
@@ -53,7 +81,7 @@ from modules.auth import admin_only, admin_only_callback
 from modules.keyboards import (
     CBA, CB_PREFIX_RESTART, CB_PREFIX_START, CB_PREFIX_STOP,
     CB_PREFIX_DOCKER_START, CB_PREFIX_DOCKER_STOP, CB_PREFIX_DOCKER_RESTART,
-    kb_main_menu, kb_confirm, kb_services_action, kb_docker_action
+    kb_main_menu, kb_confirm, kb_services_action, kb_docker_action, kb_shell_session
 )
 from modules.system_monitor import (
     gather_system_status, get_top_processes, get_docker_info, get_network_info,
@@ -186,6 +214,214 @@ dp = Dispatcher()
 router = Router()
 
 dp.include_router(router)
+
+shell_sessions: Dict[int, ShellSession] = {}
+
+
+def _cleanup_terminal_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = ANSI_ESCAPE_RE.sub("", text)
+    cooked: list[str] = []
+    for char in text:
+        if char == "\b":
+            if cooked:
+                cooked.pop()
+            continue
+        if char == "\x07":
+            continue
+        if char == "\n" or char == "\t" or ord(char) >= 32:
+            cooked.append(char)
+    return "".join(cooked)
+
+
+def _render_shell_text(session: ShellSession) -> tuple[str, object]:
+    output = _cleanup_terminal_text(session.output).strip()
+    if len(output) > SHELL_RENDER_LIMIT:
+        output = "... [старый вывод скрыт] ...\n" + output[-SHELL_RENDER_LIMIT:]
+    if not output:
+        output = "Shell запущен. Отправьте сообщение с командой."
+
+    if session.process.returncode is None and session.active:
+        status = "активна"
+        hint = "Обычные текстовые сообщения отправляются в bash. Для отмены текущей команды используйте Ctrl+C."
+        reply_markup = kb_shell_session()
+    else:
+        rc = session.process.returncode
+        status = f"завершена (rc={rc})" if rc is not None else "завершена"
+        hint = "Сессия закрыта. Запустите /shell для новой shell-сессии."
+        reply_markup = kb_main_menu()
+
+    text = (
+        "<b>🖥 Интерактивный shell</b>\n"
+        f"Статус: <b>{status}</b>\n"
+        f"{hint}\n\n"
+        f"<pre>{html.escape(output)}</pre>"
+    )
+    return text, reply_markup
+
+
+async def refresh_shell_message(chat_id: int, *, force: bool = False) -> None:
+    session = shell_sessions.get(chat_id)
+    if not session:
+        return
+
+    text, reply_markup = _render_shell_text(session)
+    if not force and text == session.last_rendered_text:
+        return
+
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=session.status_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    except Exception as exc:
+        if "message is not modified" not in str(exc).lower():
+            try:
+                sent = await bot.send_message(chat_id, text, reply_markup=reply_markup)
+                session.status_message_id = sent.message_id
+            except Exception as send_exc:
+                logger.warning("Failed to refresh shell message: %s", send_exc)
+                return
+
+    session.last_rendered_text = text
+
+
+async def cleanup_shell_session(chat_id: int, *, terminate_process: bool) -> bool:
+    session = shell_sessions.pop(chat_id, None)
+    if not session:
+        return False
+
+    session.active = False
+
+    if terminate_process and session.process.returncode is None:
+        try:
+            os.killpg(session.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            logger.warning("Failed to terminate shell session %s: %s", chat_id, exc)
+
+        try:
+            await asyncio.wait_for(session.process.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(session.process.pid, signal.SIGKILL)
+            with contextlib.suppress(Exception):
+                await session.process.wait()
+
+    with contextlib.suppress(OSError):
+        os.close(session.master_fd)
+
+    current_task = asyncio.current_task()
+    for task in (session.reader_task, session.flusher_task):
+        if task and task is not current_task and not task.done():
+            task.cancel()
+
+    return True
+
+
+async def send_shell_input(chat_id: int, text: str) -> bool:
+    session = shell_sessions.get(chat_id)
+    if not session or session.process.returncode is not None or not session.active:
+        return False
+
+    try:
+        os.write(session.master_fd, (text + "\n").encode())
+    except OSError as exc:
+        logger.warning("Failed to write to shell session %s: %s", chat_id, exc)
+        return False
+
+    session.dirty.set()
+    return True
+
+
+async def shell_reader_loop(chat_id: int) -> None:
+    session = shell_sessions.get(chat_id)
+    if not session:
+        return
+
+    try:
+        while True:
+            try:
+                chunk = await asyncio.to_thread(os.read, session.master_fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            session.output = (session.output + chunk.decode(errors="replace"))[-SHELL_BUFFER_LIMIT:]
+            session.dirty.set()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        if session.process.returncode is None:
+            with contextlib.suppress(Exception):
+                await session.process.wait()
+        with contextlib.suppress(OSError):
+            os.close(session.master_fd)
+        session.active = False
+        rc = session.process.returncode
+        session.output = (session.output + f"\n\n[shell session closed, rc={rc}]\n")[-SHELL_BUFFER_LIMIT:]
+        session.dirty.set()
+
+
+async def shell_flusher_loop(chat_id: int) -> None:
+    session = shell_sessions.get(chat_id)
+    if not session:
+        return
+
+    try:
+        while True:
+            await session.dirty.wait()
+            await asyncio.sleep(0.6)
+            session.dirty.clear()
+            await refresh_shell_message(chat_id)
+
+            if session.process.returncode is not None and not session.active:
+                await refresh_shell_message(chat_id, force=True)
+                break
+    except asyncio.CancelledError:
+        raise
+
+
+async def start_shell_session(message: Message) -> ShellSession:
+    master_fd, slave_fd = pty.openpty()
+    env = os.environ.copy()
+    env["TERM"] = env.get("TERM", "xterm")
+    env["PS1"] = "tg-shell$ "
+    env["PROMPT_COMMAND"] = ""
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-i",
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+            start_new_session=True,
+        )
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(slave_fd)
+
+    status_message = await message.answer(
+        "<b>🖥 Интерактивный shell</b>\nЗапуск сессии...",
+        reply_markup=kb_shell_session(),
+    )
+    session = ShellSession(
+        process=process,
+        master_fd=master_fd,
+        status_message_id=status_message.message_id,
+    )
+    shell_sessions[message.chat.id] = session
+    session.reader_task = asyncio.create_task(shell_reader_loop(message.chat.id))
+    session.flusher_task = asyncio.create_task(shell_flusher_loop(message.chat.id))
+    session.dirty.set()
+    return session
 
 # ----------------------------------------------------------------------------
 # Command Handlers
@@ -394,6 +630,68 @@ async def cmd_outline_audit(message: Message, command: CommandObject, **kwargs):
             if json_path:
                 with open(json_path, 'rb') as f:
                     await message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
+
+
+@router.message(Command("shell"))
+@admin_only
+async def cmd_shell(message: Message, command: CommandObject, **kwargs):
+    logger.info("/shell from admin args=%s", command.args)
+    if not ENABLE_SHELL:
+        await message.answer(
+            "Интерактивный shell отключён в конфигурации. Установите `ENABLE_SHELL=true` в `.env` или `config.py`.",
+            reply_markup=kb_main_menu(),
+        )
+        return
+
+    existing = shell_sessions.get(message.chat.id)
+    if existing and existing.process.returncode is None and existing.active:
+        if command.args:
+            sent = await send_shell_input(message.chat.id, command.args)
+            if not sent:
+                await message.answer("Не удалось отправить команду в активную shell-сессию.", reply_markup=kb_main_menu())
+                return
+        await refresh_shell_message(message.chat.id, force=True)
+        return
+
+    if existing:
+        await cleanup_shell_session(message.chat.id, terminate_process=False)
+
+    await start_shell_session(message)
+    if command.args:
+        await asyncio.sleep(0.2)
+        await send_shell_input(message.chat.id, command.args)
+
+
+@router.message(Command("shell_exit"))
+@admin_only
+async def cmd_shell_exit(message: Message, command: CommandObject, **kwargs):
+    closed = await cleanup_shell_session(message.chat.id, terminate_process=True)
+    if closed:
+        await message.answer("⏹ Shell-сессия завершена.", reply_markup=kb_main_menu())
+    else:
+        await message.answer("Активной shell-сессии нет.", reply_markup=kb_main_menu())
+
+
+@router.message(F.text)
+@admin_only
+async def route_shell_text_input(message: Message, **kwargs):
+    session = shell_sessions.get(message.chat.id)
+    if not session or session.process.returncode is not None or not session.active:
+        return
+
+    text = (message.text or "").strip()
+    if not text:
+        return
+
+    first_token = text.split(maxsplit=1)[0]
+    if first_token.startswith("/"):
+        command_name = first_token[1:].split("@", 1)[0]
+        if command_name in KNOWN_BOT_COMMANDS:
+            return
+
+    sent = await send_shell_input(message.chat.id, message.text or "")
+    if not sent:
+        await message.answer("Не удалось передать ввод в shell. Попробуйте открыть новую сессию через /shell.", reply_markup=kb_main_menu())
 
 # ----------------------------------------------------------------------------
 # Callback Query Handlers
@@ -758,6 +1056,40 @@ async def cb_outline_audit(callback: CallbackQuery):
             with open(json_path, 'rb') as f:
                 await callback.message.answer_document(f, caption="Полный JSON отчёт Outline Audit")
 
+
+@router.callback_query(F.data == CBA.SHELL_CTRL_C.value)
+async def cb_shell_ctrl_c(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+
+    session = shell_sessions.get(callback.message.chat.id)
+    if not session or session.process.returncode is not None or not session.active:
+        await callback.answer("Shell-сессия не активна", show_alert=False)
+        return
+
+    try:
+        os.write(session.master_fd, b"\x03")
+        session.dirty.set()
+        await callback.answer("Отправлен Ctrl+C", show_alert=False)
+    except OSError:
+        await callback.answer("Не удалось отправить Ctrl+C", show_alert=True)
+
+
+@router.callback_query(F.data == CBA.SHELL_STOP.value)
+async def cb_shell_stop(callback: CallbackQuery):
+    if not await admin_only_callback(callback):
+        return
+
+    closed = await cleanup_shell_session(callback.message.chat.id, terminate_process=True)
+    if closed:
+        try:
+            await callback.message.edit_text("⏹ Shell-сессия завершена.", reply_markup=kb_main_menu())
+        except Exception:
+            await callback.message.answer("⏹ Shell-сессия завершена.", reply_markup=kb_main_menu())
+        await callback.answer("Сессия остановлена", show_alert=False)
+    else:
+        await callback.answer("Активной shell-сессии нет", show_alert=False)
+
 # Generic cancel handler for confirmation dialogs
 @router.callback_query(F.data == "IGNORE")
 async def cb_ignore(callback: CallbackQuery):
@@ -836,6 +1168,8 @@ async def set_bot_commands() -> None:
         BotCommand(command="ip", description="Публичный IP"),
         BotCommand(command="service", description="Управление сервисом"),
         BotCommand(command="dockerctl", description="Управление Docker"),
+        BotCommand(command="shell", description="Интерактивный shell"),
+        BotCommand(command="shell_exit", description="Завершить shell"),
     ]
     await bot.set_my_commands(commands=commands, scope=BotCommandScopeDefault())
 
